@@ -1,0 +1,109 @@
+/*
+ * Hoja de estilos de Sol‑R Aim Trainer.
+ *
+ * Este archivo contiene todos los estilos utilizados en la aplicación.  La
+ * estructura CSS se corresponde con la versión original del juego, pero se
+ * ha extraído a un archivo independiente para facilitar su mantenimiento.
+ *
+ * ZONA SEGURA: puedes ajustar colores, márgenes o fuentes si lo deseas.
+ * ZONA PELIGROSA: no elimines clases ni modifiques las posiciones
+ * absolutamente, ya que podrían dejar de funcionar los paneles o la
+ * distribución del HUD.
+ */
+
+html,body{margin:0;padding:0;background:#000;overflow:hidden}
+canvas{display:block}
+
+.toast{
+  position:fixed;
+  right:16px;
+  top:16px;
+  color:#e8e8e8;
+  font:14px/1.35 system-ui, -apple-system, Segoe UI, Roboto, Arial;
+  background:rgba(0,0,0,.72);
+  border:1px solid rgba(255,255,255,.10);
+  padding:10px 12px;
+  border-radius:12px;
+  box-shadow:0 10px 30px rgba(0,0,0,.35);
+  z-index:50;
+  max-width:460px;
+  opacity:1;
+  transform:translateY(0);
+  transition:opacity .25s ease, transform .25s ease;
+  pointer-events:none;
+  user-select:none;
+}
+.toast.hide{opacity:0; transform:translateY(-6px)}
+.toast .k{color:#8ff; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace}
+.toast .dim{opacity:.85}
+
+.panel{
+  position:fixed;
+  right:16px;
+  color:#ddd;
+  font:13px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  background:rgba(0,0,0,.60);
+  border:1px solid rgba(255,255,255,.10);
+  padding:10px 12px;
+  border-radius:12px;
+  box-shadow:0 12px 34px rgba(0,0,0,.35);
+  z-index:40;
+  width:min(460px, calc(100vw - 32px));
+  backdrop-filter: blur(6px);
+}
+.panel.hidden{display:none}
+
+.stack-dev { top: 74px !important; }
+.stack-cfg { top: 74px !important; margin-top: 12px; }
+
+.row{display:flex;gap:12px;flex-wrap:wrap}
+.box{min-width:210px; flex:1}
+.k{color:#8ff}
+.ok{color:#9f9}
+.bad{color:#f88}
+
+.h{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  margin-bottom:8px;
+}
+.h .title{font-weight:700; letter-spacing:.2px}
+.pill{
+  font-size:12px;
+  opacity:.9;
+  border:1px solid rgba(255,255,255,.12);
+  padding:2px 8px;
+  border-radius:999px;
+  background:rgba(255,255,255,.06);
+}
+
+.controls{display:grid; gap:10px}
+.control{
+  display:grid;
+  grid-template-columns: 1fr 150px;
+  gap:10px;
+  align-items:center;
+}
+.control label{opacity:.95}
+.control .val{opacity:.9; text-align:right}
+input[type="range"]{width:100%}
+.check{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  justify-content:space-between;
+  padding-top:4px;
+}
+.check label{display:flex; gap:8px; align-items:center}
+.mini{opacity:.8; font-size:12px}
+
+select{
+  width:100%;
+  background:rgba(255,255,255,.06);
+  border:1px solid rgba(255,255,255,.12);
+  color:#ddd;
+  padding:6px 8px;
+  border-radius:10px;
+  outline:none;
+}

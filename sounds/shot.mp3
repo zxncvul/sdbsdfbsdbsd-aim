@@ -1,0 +1,7 @@
+<!--
+  Este es un archivo de marcador de posición para el sonido del disparo.
+  La refactorización original no incluye los archivos de sonido por
+  limitaciones de tamaño.  Puedes sustituir este archivo por tu propio
+  archivo MP3 (llamado shot.mp3) para que el juego reproduzca el sonido
+  al disparar.
+-->

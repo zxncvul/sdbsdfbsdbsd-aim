@@ -1,0 +1,1309 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Sol‑R Aim Trainer (modo offline)</title>
+  <!--
+    Este fichero es una versión offline de Sol‑R Aim Trainer que utiliza
+    los mismos módulos ES que la versión principal (`index.html`).  Al
+    abrir este archivo mediante doble click, los navegadores modernos
+    suelen permitir cargar módulos locales sin servidor.  Si tu
+    navegador bloquea la ejecución (por ejemplo, muestra un error de
+    CORS al importar los archivos JavaScript), ejecuta un pequeño
+    servidor local desde la carpeta del proyecto:
+
+      python3 -m http.server
+
+    y abre entonces `http://localhost:8000/index.html` con tu
+    navegador.  De este modo disfrutarás de todas las funciones
+    (movers con vidas y patrones aleatorios, huida, etc.) sin tener que
+    modificar nada.
+  -->
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div class="panel hidden" id="devHud" style="top:74px"></div>
+  <div class="panel hidden" id="configPanel" style="top:74px"></div>
+  <div class="toast" id="toast">
+    <div><span class="k">C</span> = Configuración | <span class="k">I</span> = HUD dev | <span class="k">F</span> = FA‑off</div>
+    <div class="dim mini"><span class="k">Shift+F</span> = reset inercia (sin apagar). <span class="k">Espacio</span> = respawn targets.</div>
+  </div>
+  <audio id="shot" src="sounds/shot.mp3" preload="auto"></audio>
+  <audio id="success" src="sounds/succes.mp3" preload="auto"></audio>
+  <!--
+    Para que la versión offline funcione sin servidor ni módulos ES,
+    incluimos todo el código del juego en un único script IIFE.  Así
+    puedes abrir este archivo directamente (doble click) en navegadores
+    que no permiten importar módulos desde archivos locales.  No hay
+    dependencias externas: todo el código original se ha combinado
+    manualmente aquí respetando la lógica, patrones y configuraciones.
+  -->
+  <script>
+  (() => {
+    'use strict';
+    /* ====================== CONFIGURACIÓN ==========================
+     * Constantes fijas y objeto CFG editable.  Estas variables
+     * determinan cómo responde el juego al mando, tamaños, tiempos
+     * de animación y comportamiento de los movers.
+     */
+    const TRIGGER_BUTTON = 23;
+    const AXIS_ROLL  = 0;
+    const AXIS_PITCH = 1;
+    const AXIS_YAW   = 5;
+    const DEADZONE   = 0.12;
+    const NOISE_SNAP = 0.02;
+    const USE_DOMINANT_MOVEMENT = true;
+    const ROLL_LOCK_THRESHOLD   = 0.35;
+    const ROLL_LOCK_FACTOR      = 0.70;
+    const SPEED_BASE      = 6;
+    const ROLL_SPEED_BASE = 0.035;
+    const MARGIN = 140;
+    const CROSSHAIR_FLASH_MS   = 90;
+    const MISS_FLASH_MS        = 140;
+    const HIT_FADE_MS          = 220;
+    const SUCCESS_DELAY_MS     = 220;
+    const SUCCESS_COOLDOWN_MS  = 160;
+    const MOVERS_MAX_HITS = 3;
+    const HEAL_INTERVAL_MS = 4000;
+    // Objeto de configuración editable desde la UI
+    const CFG = {
+      sensX: 1.0,
+      sensY: 1.0,
+      sensZ: 0.20,
+      targetR: 10,
+      targetCount: 1,
+      regenOnHit: true,
+      randomTargetSize: false,
+      useCurve: true,
+      applyCurveToX: false,
+      cpX: 25,
+      vaX: 8,
+      cpY: 25,
+      vaY: 8,
+      showGrid: false,
+      blackBg: false,
+      faOff: false,
+      faAccX: 0.05,
+      faAccY: 0.05,
+      faAccZ: 0.05,
+      moversEnabled: true,
+      // Cantidad inicial de movers.  Ajustamos a 3 para que haya algunos
+      // al iniciar el modo offline.  Este valor puede modificarse desde la UI.
+      moversCount: 3,
+      moversPattern: "random",
+      moversSpeed: 1.0,
+      moversAvoid: 1.0,
+      moversR: 14,
+      moversFlee: false,
+      // Incrementos de velocidad de huida al recibir impactos.  Estos valores son
+      // proporciones (por ejemplo, 0.40 = +40 %, 0.60 = +60 %) que se
+      // acumulan para determinar el multiplicador de huida.  Un mover
+      // con un impacto tendrá un multiplicador 1 + moversHit1Boost; con dos
+      // impactos tendrá 1 + moversHit1Boost + moversHit2Boost.
+      moversHit1Boost: 0.40,
+      moversHit2Boost: 0.60
+    };
+    /* ========================= ESTADO ============================
+     * Variables que representan el estado del juego en cada momento.
+     * Se modifican a lo largo de la ejecución; otros módulos acceden
+     * directamente a estas propiedades.
+     */
+    let activeIndex = 0;
+    let rollAngle = 0;
+    const player = { x: 0, y: 0 };
+    let prevPlayerX = 0;
+    let prevPlayerY = 0;
+    let targets = [];
+    let movers = [];
+    let triggerPressed = false;
+    let crosshairFlashUntil = 0;
+    let missFlashUntil = 0;
+    let lastSuccessAt = 0;
+    let lastFrameMs = performance.now();
+    let showConfig = false;
+    let showDevHud = false;
+    // Referencias DOM (canvas, context, paneles, audio)
+    let canvas = null;
+    let ctx = null;
+    let devHudEl = null;
+    let configPanelEl = null;
+    let toastEl = null;
+    let shotAudio = null;
+    let successAudio = null;
+    function initDomRefs(c, context, devHud, cfgPanel, toast, shot, success) {
+      canvas = c;
+      ctx = context;
+      devHudEl = devHud;
+      configPanelEl = cfgPanel;
+      toastEl = toast;
+      shotAudio = shot;
+      successAudio = success;
+    }
+    /* ======================= UTILIDADES ==========================
+     * Funciones independientes que ayudan a normalizar valores,
+     * transformar coordenadas o generar números aleatorios.
+     */
+    function clamp(v, a, b) {
+      return Math.max(a, Math.min(b, v));
+    }
+    function dz(v) {
+      return Math.abs(v) < DEADZONE ? 0 : v;
+    }
+    function snap0(v) {
+      return Math.abs(v) < NOISE_SNAP ? 0 : v;
+    }
+    function cleanAxis(v) {
+      if (!Number.isFinite(v)) v = 0;
+      v = clamp(v, -1, 1);
+      v = dz(v);
+      v = snap0(v);
+      return v;
+    }
+    function dominantAxis(x, y) {
+      const ax = Math.abs(x);
+      const ay = Math.abs(y);
+      if (ax > ay) return { x, y: 0 };
+      if (ay > ax) return { x: 0, y };
+      return { x: 0, y: 0 };
+    }
+    function worldToScreen(dx, dy, cos, sin) {
+      return { sx: (dx * cos) - (dy * sin), sy: (dx * sin) + (dy * cos) };
+    }
+    function screenToWorld(sx, sy, cos, sin) {
+      return { dx: (sx * cos) + (sy * sin), dy: (-sx * sin) + (sy * cos) };
+    }
+    function applyJCurve(v, cp, va) {
+      const sign = Math.sign(v);
+      const x = Math.abs(v);
+      const expo = 1.0 + (cp * 0.03) + ((10 - va) * 0.18);
+      return sign * Math.pow(x, expo);
+    }
+    function rand(a, b) {
+      return a + Math.random() * (b - a);
+    }
+    function nowMs() {
+      return performance.now();
+    }
+    /* ====================== INPUT GAMEPAD =========================
+     * Lectura del mando a través de la API getGamepads.
+     */
+    function getPad(index = 0) {
+      const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+      return pads[index] || null;
+    }
+    function fmt(n) {
+      return (n >= 0 ? '+' : '') + n.toFixed(3);
+    }
+    /* ======================== FLIGHT (FA‑off) =====================
+     * Implementa la inercia (FA‑off) para movimientos más realistas.
+     */
+    let vx = 0;
+    let vy = 0;
+    let wVel = 0;
+    function flightReset() {
+      vx = 0;
+      vy = 0;
+      wVel = 0;
+    }
+    function flightStepMove(ax, ay, dtN, maxV) {
+      vx += ax * dtN;
+      vy += ay * dtN;
+      const sp = Math.hypot(vx, vy);
+      if (sp > maxV && sp > 0) {
+        vx = (vx / sp) * maxV;
+        vy = (vy / sp) * maxV;
+      }
+      return { dx: vx * dtN, dy: vy * dtN, vx, vy };
+    }
+    function flightStepRoll(rollIn, dtN, angAccel, maxW) {
+      wVel += rollIn * angAccel * dtN;
+      wVel = clamp(wVel, -maxW, maxW);
+      return { dAngle: wVel * dtN, w: wVel };
+    }
+    function flightGetVel() {
+      return { vx, vy, w: wVel };
+    }
+    /* ======================= TARGETS (BLANCOS) ===================
+     * Lógica de creación y regeneración de blancos.
+     */
+    function pickTargetRadius() {
+      if (!CFG.randomTargetSize) return CFG.targetR;
+      const base = CFG.targetR;
+      const r = base * (0.6 + Math.random() * 1.4);
+      return clamp(r, 4, 200);
+    }
+    function spawnTargetNearPlayer() {
+      const limX = canvas.width / 2 - MARGIN;
+      const limY = canvas.height / 2 - MARGIN;
+      // coordenadas en pantalla relativas al centro
+      const sx = (Math.random() * 2 - 1) * limX;
+      const sy = (Math.random() * 2 - 1) * limY;
+      const cos = Math.cos(rollAngle);
+      const sin = Math.sin(rollAngle);
+      const w = screenToWorld(sx, sy, cos, sin);
+      return {
+        x: player.x + w.dx,
+        y: player.y + w.dy,
+        r: pickTargetRadius(),
+        hitStart: 0,
+        dead: false
+      };
+    }
+    function respawnAllTargets() {
+      const n = clamp(Math.round(CFG.targetCount), 1, 20);
+      targets = [];
+      for (let i = 0; i < n; i++) {
+        targets.push(spawnTargetNearPlayer());
+      }
+    }
+    function applyUniformRadiusToAll() {
+      for (const t of targets) {
+        t.r = CFG.targetR;
+      }
+    }
+    /* ========================= MOVERS ===========================
+     * Implementa los objetos móviles con patrones aleatorios,
+     * regeneración de vidas y comportamiento de huida.
+     */
+    const PATTERNS = ['bounce', 'orbit', 'lissajous', 'strafe', 'circular', 'spiral', 'figure8', 'zigzag'];
+    function ensureMoversCount() {
+      const n = CFG.moversEnabled ? clamp((CFG.moversCount | 0), 0, 5) : 0;
+      CFG.moversCount = n;
+      if (n === 0) {
+        movers.length = 0;
+        return;
+      }
+      while (movers.length < n) movers.push(spawnMoverInWindow());
+      while (movers.length > n) movers.pop();
+    }
+    function spawnMoverInWindow() {
+      const limX = canvas.width / 2 - MARGIN;
+      const limY = canvas.height / 2 - MARGIN;
+      const cos = Math.cos(rollAngle);
+      const sin = Math.sin(rollAngle);
+      const r = clamp(CFG.moversR, 4, Math.min(limX, limY));
+      let sx = 0;
+      let sy = 0;
+      const minD = 90;
+      for (let tries = 0; tries < 30; tries++) {
+        sx = rand(-limX + r, limX - r);
+        sy = rand(-limY + r, limY - r);
+        if (Math.hypot(sx, sy) >= minD) break;
+      }
+      const wpos = screenToWorld(sx, sy, cos, sin);
+      let svx = rand(-1, 1);
+      let svy = rand(-1, 1);
+      const sp = Math.hypot(svx, svy) || 1;
+      svx /= sp;
+      svy /= sp;
+      const wvel = screenToWorld(svx, svy, cos, sin);
+      const tNow = nowMs();
+      const pattern = PATTERNS[Math.floor(Math.random() * PATTERNS.length)];
+      // Calculamos posición inicial en mundo.  Guardamos estas
+      // coordenadas como origen para que los patrones de movimiento
+      // tengan un centro propio (no dependan de la mirilla).
+      const x = player.x + wpos.dx;
+      const y = player.y + wpos.dy;
+      return {
+        x,
+        y,
+        // Origen del mover para patrones: se usa para calcular la
+        // posición base en pantalla al generar trayectorias.
+        originX: x,
+        originY: y,
+        vx: wvel.dx,
+        vy: wvel.dy,
+        r,
+        t0: tNow,
+        p1: rand(0, Math.PI * 2),
+        p2: rand(0, Math.PI * 2),
+        hitUntil: 0,
+        hits: 0,
+        escapeBoost: 0,
+        lastHitTime: 0,
+        pattern,
+        nextPatternSwitch: tNow + rand(2000, 6000)
+      };
+    }
+    function respawnMover(m) {
+      const nm = spawnMoverInWindow();
+      m.x = nm.x;
+      m.y = nm.y;
+      m.originX = nm.originX;
+      m.originY = nm.originY;
+      m.vx = nm.vx;
+      m.vy = nm.vy;
+      m.r = nm.r;
+      m.t0 = nm.t0;
+      m.p1 = nm.p1;
+      m.p2 = nm.p2;
+      m.hitUntil = 0;
+      m.hits = 0;
+      m.escapeBoost = 0;
+      m.lastHitTime = 0;
+      m.pattern = nm.pattern;
+      m.nextPatternSwitch = nm.nextPatternSwitch;
+    }
+    function updateMovers(dtN, playerSpeed = 0) {
+      ensureMoversCount();
+      if (!CFG.moversEnabled || movers.length === 0) return;
+      const t = nowMs();
+      const limX = canvas.width / 2 - MARGIN;
+      const limY = canvas.height / 2 - MARGIN;
+      const cos = Math.cos(rollAngle);
+      const sin = Math.sin(rollAngle);
+      // Recopilamos blancos vivos para esquiva
+      const liveTargetsScr = [];
+      for (const tg of targets) {
+        if (tg.dead) continue;
+        if (tg.hitStart) continue;
+        const dx = tg.x - player.x;
+        const dy = tg.y - player.y;
+        const s = worldToScreen(dx, dy, cos, sin);
+        liveTargetsScr.push({ sx: s.sx, sy: s.sy, r: tg.r });
+      }
+      const moversScr = movers.map(m => {
+        const dx = m.x - player.x;
+        const dy = m.y - player.y;
+        const s = worldToScreen(dx, dy, cos, sin);
+        return { sx: s.sx, sy: s.sy };
+      });
+      const speed = CFG.moversSpeed;
+      const avoidK = CFG.moversAvoid;
+      for (let i = 0; i < movers.length; i++) {
+        const m = movers[i];
+        // Regeneración de vidas y velocidad de huida
+        if (m.hits > 0 && m.lastHitTime && (t - m.lastHitTime > HEAL_INTERVAL_MS)) {
+          m.hits = 0;
+          m.escapeBoost = 0;
+          m.lastHitTime = 0;
+        }
+        // Cambio automático de patrón
+        if (t > (m.nextPatternSwitch || 0)) {
+          m.pattern = PATTERNS[Math.floor(Math.random() * PATTERNS.length)];
+          m.nextPatternSwitch = t + rand(2000, 6000);
+          m.t0 = t;
+          m.p1 = rand(0, Math.PI * 2);
+          m.p2 = rand(0, Math.PI * 2);
+        }
+        // Posición y velocidad actual en pantalla
+        const dx = m.x - player.x;
+        const dy = m.y - player.y;
+        let s = worldToScreen(dx, dy, cos, sin);
+        let vs = worldToScreen(m.vx, m.vy, cos, sin);
+        // Calculamos la posición base en pantalla a partir del origen
+        // guardado en el mover.  Esto define el centro de su órbita o
+        // trayectoria, evitando que todas las figuras giren alrededor
+        // del centro de la pantalla.
+        const baseDx = (m.originX ?? m.x) - player.x;
+        const baseDy = (m.originY ?? m.y) - player.y;
+        const baseScr = worldToScreen(baseDx, baseDy, cos, sin);
+        // Calculamos velocidad deseada según patrón
+        let desVx = vs.sx;
+        let desVy = vs.sy;
+        const elapsed = (t - m.t0);
+        const tt = (t - m.t0) * 0.001;
+        // Factor de tamaño para escalar la amplitud de los patrones de movimiento. Basado en un radio por defecto de 14 px.
+        const sizeFactor = (m.r || 14) / 14;
+        switch (m.pattern) {
+          case 'bounce':
+            // rebote: conservar velocidad
+            break;
+          case 'orbit': {
+            const ang = (elapsed * 0.008 * speed) + m.p1;
+            // Escalamos el radio orbital según el tamaño del mover
+            const rad = Math.min(limX, limY) * (0.25 + 0.25 * Math.sin(m.p2)) * sizeFactor;
+            const tx = baseScr.sx + Math.cos(ang) * rad;
+            const ty = baseScr.sy + Math.sin(ang) * rad;
+            desVx = (tx - s.sx) * 0.06;
+            desVy = (ty - s.sy) * 0.06;
+            break;
+          }
+          case 'lissajous': {
+            // Las amplitudes A y B dependen del tamaño del mover
+            const A = limX * 0.85 * sizeFactor;
+            const B = limY * 0.65 * sizeFactor;
+            const tx = baseScr.sx + Math.sin(tt * 1.7 * speed + m.p1) * A;
+            const ty = baseScr.sy + Math.sin(tt * 2.3 * speed + m.p2) * B;
+            desVx = (tx - s.sx) * 0.07;
+            desVy = (ty - s.sy) * 0.07;
+            break;
+          }
+          case 'strafe': {
+            // Desplazamiento lateral y vertical escalados por el tamaño
+            const tx = baseScr.sx + Math.sin(tt * 2.8 * speed + m.p1) * (limX * 0.95 * sizeFactor);
+            const ty = baseScr.sy + Math.sin(tt * 0.9 * speed + m.p2) * (limY * 0.25 * sizeFactor);
+            desVx = (tx - s.sx) * 0.08;
+            desVy = (ty - s.sy) * 0.08;
+            break;
+          }
+          case 'circular': {
+            const ang = (elapsed * 0.006 * speed) + m.p1;
+            // Radio del círculo proporcional al tamaño
+            const rad = Math.min(limX, limY) * 0.5 * sizeFactor;
+            const tx = baseScr.sx + Math.cos(ang) * rad;
+            const ty = baseScr.sy + Math.sin(ang) * rad;
+            desVx = (tx - s.sx) * 0.05;
+            desVy = (ty - s.sy) * 0.05;
+            break;
+          }
+          case 'spiral': {
+            // Para la espiral ajustamos las amplitudes según el tamaño
+            const baseRad = Math.min(limX, limY) * 0.2 * sizeFactor;
+            const mod = ((elapsed * 0.00025 * speed) % 1);
+            const rad = baseRad + mod * (Math.min(limX, limY) * 0.6 * sizeFactor);
+            const ang = (elapsed * 0.006 * speed) + m.p1;
+            const tx = baseScr.sx + Math.cos(ang) * rad;
+            const ty = baseScr.sy + Math.sin(ang) * rad;
+            desVx = (tx - s.sx) * 0.05;
+            desVy = (ty - s.sy) * 0.05;
+            break;
+          }
+          case 'figure8': {
+            // Amplitudes de la figura en 8 proporcionales al tamaño
+            const A = limX * 0.7 * sizeFactor;
+            const B = limY * 0.4 * sizeFactor;
+            const tx = baseScr.sx + Math.sin(tt * 1.5 * speed + m.p1) * A;
+            const ty = baseScr.sy + Math.sin(tt * 3.0 * speed + m.p2) * B;
+            desVx = (tx - s.sx) * 0.07;
+            desVy = (ty - s.sy) * 0.07;
+            break;
+          }
+          case 'zigzag': {
+            const phase = ((elapsed * 0.002 * speed) % 2);
+            const hx = phase < 1 ? phase : 2 - phase;
+            // El zigzag ocupa más o menos espacio dependiendo del tamaño
+            const tx = baseScr.sx + (hx * 2 - 1) * (limX * 0.95 * sizeFactor);
+            const ty = baseScr.sy + Math.sin(elapsed * 0.004 * speed + m.p2) * (limY * 0.5 * sizeFactor);
+            desVx = (tx - s.sx) * 0.08;
+            desVy = (ty - s.sy) * 0.08;
+            break;
+          }
+        }
+
+        // Ajuste de velocidad por impactos cuando flee está desactivado
+        // Si un mover ha recibido impactos (`m.escapeBoost` > 0) y la huida
+        // no está activada (`CFG.moversFlee` es false), no debe alejarse
+        // del jugador pero sí moverse más rápido según el multiplicador
+        // configurado.  Multiplicamos la velocidad deseada por
+        // (1 + escapeBoost) antes de aplicar las fuerzas de esquiva.
+        if (!CFG.moversFlee && m.escapeBoost > 0) {
+          const boostFactor = 1 + m.escapeBoost;
+          desVx *= boostFactor;
+          desVy *= boostFactor;
+        }
+
+        // Esquiva de blancos y otros movers
+        let ax = 0;
+        let ay = 0;
+        for (const o of liveTargetsScr) {
+          const dxs = s.sx - o.sx;
+          const dys = s.sy - o.sy;
+          const dist = Math.hypot(dxs, dys) || 0.0001;
+          const avoidR = (m.r + o.r + 70);
+          if (dist < avoidR) {
+            const p = (1 - dist / avoidR);
+            ax += (dxs / dist) * (p * 1.2) * avoidK;
+            ay += (dys / dist) * (p * 1.2) * avoidK;
+          }
+        }
+        for (let j = 0; j < movers.length; j++) {
+          if (j === i) continue;
+          const o = moversScr[j];
+          const dxs = s.sx - o.sx;
+          const dys = s.sy - o.sy;
+          const dist = Math.hypot(dxs, dys) || 0.0001;
+          const avoidR = (m.r + movers[j].r + 55);
+          if (dist < avoidR) {
+            const p = (1 - dist / avoidR);
+            ax += (dxs / dist) * (p * 0.8) * avoidK;
+            ay += (dys / dist) * (p * 0.8) * avoidK;
+          }
+        }
+        // Comportamiento de huida: si algún impacto lo ha asustado o está activa la huida al acercarse la mirilla.
+        // Si escapeBoost > 0, usamos como base la velocidad del jugador o un valor fijo cuando éste está quieto.
+        {
+          // Para huir radialmente requerimos que la opción flee esté
+          // activada.  De lo contrario, los movers con impactos sólo
+          // aumentan su velocidad pero no se alejan del jugador.
+          const fleeActive = CFG.moversFlee && ((playerSpeed > 0) || (m.escapeBoost > 0));
+          if (fleeActive) {
+            const distToPlayer = Math.hypot(s.sx, s.sy) || 0.0001;
+            const fleeR = Math.min(limX, limY) * 0.7;
+            if (distToPlayer < fleeR) {
+              // Factor de proximidad inversamente proporcional a la distancia.
+              const inv = (1 - distToPlayer / fleeR);
+              // Si está asustado y el jugador no se mueve, partimos de la velocidad base (8 * speed).
+              const baseSp = (m.escapeBoost > 0 && playerSpeed === 0) ? (8.0 * speed) : playerSpeed;
+              const fleeV = baseSp * inv * (1 + (m.escapeBoost || 0));
+              const dirX = s.sx / distToPlayer;
+              const dirY = s.sy / distToPlayer;
+              desVx += dirX * fleeV;
+              desVy += dirY * fleeV;
+            }
+          }
+        }
+        // Combinamos con fuerzas de esquiva
+        let svx = desVx + ax;
+        let svy = desVy + ay;
+        if (Math.hypot(svx, svy) < 0.0005) {
+          svx = vs.sx * 0.7;
+          svy = vs.sy * 0.7;
+        }
+        const spd = Math.hypot(svx, svy) || 1;
+        const maxSp = 8.0 * speed;
+        if (spd > maxSp) {
+          svx = (svx / spd) * maxSp;
+          svy = (svy / spd) * maxSp;
+        }
+        s.sx += svx * dtN;
+        s.sy += svy * dtN;
+        const bx = limX - m.r;
+        const by = limY - m.r;
+        if (s.sx < -bx) {
+          s.sx = -bx;
+          svx = Math.abs(svx);
+        }
+        if (s.sx > bx) {
+          s.sx = bx;
+          svx = -Math.abs(svx);
+        }
+        if (s.sy < -by) {
+          s.sy = -by;
+          svy = Math.abs(svy);
+        }
+        if (s.sy > by) {
+          s.sy = by;
+          svy = -Math.abs(svy);
+        }
+        const wpos = screenToWorld(s.sx, s.sy, cos, sin);
+        const wvel = screenToWorld(svx, svy, cos, sin);
+        m.x = player.x + wpos.dx;
+        m.y = player.y + wpos.dy;
+        m.vx = wvel.dx;
+        m.vy = wvel.dy;
+      }
+    }
+    function hitTestMovers() {
+      if (!CFG.moversEnabled || movers.length === 0) return -1;
+      for (let i = 0; i < movers.length; i++) {
+        const m = movers[i];
+        const dx = m.x - player.x;
+        const dy = m.y - player.y;
+        if (Math.hypot(dx, dy) < m.r) return i;
+      }
+      return -1;
+    }
+    /* ========================= RENDER ===========================
+     * Dibujo de fondo, blancos, movers, mirilla y HUD de desarrollo.
+     */
+    function drawBackground() {
+      if (!ctx || !canvas) return;
+      if (CFG.blackBg) {
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        return;
+      }
+      if (!CFG.showGrid) {
+        ctx.fillStyle = '#111';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        return;
+      }
+      ctx.save();
+      ctx.translate(canvas.width / 2, canvas.height / 2);
+      ctx.rotate(rollAngle);
+      const size = 40;
+      const wsize = canvas.width * 1.6;
+      const hsize = canvas.height * 1.6;
+      const baseX = Math.floor(player.x / size) * size;
+      const baseY = Math.floor(player.y / size) * size;
+      for (let x = baseX - wsize; x <= baseX + wsize; x += size) {
+        for (let y = baseY - hsize; y <= baseY + hsize; y += size) {
+          const ix = Math.floor(x / size);
+          const iy = Math.floor(y / size);
+          ctx.fillStyle = ((ix + iy) % 2 === 0) ? '#1a1a1a' : '#141414';
+          ctx.fillRect(x - player.x, y - player.y, size, size);
+        }
+      }
+      ctx.restore();
+    }
+    function drawTargets() {
+      if (!ctx || !canvas) return;
+      const t = nowMs();
+      ctx.save();
+      ctx.translate(canvas.width / 2, canvas.height / 2);
+      ctx.rotate(rollAngle);
+      // Blancos
+      for (const tg of targets) {
+        if (tg.dead) continue;
+        const tx = tg.x - player.x;
+        const ty = tg.y - player.y;
+        let color = '#ffffff';
+        let alpha = 1;
+        if (tg.hitStart) {
+          color = '#22cc66';
+          const p = Math.max(0, Math.min(1, (t - tg.hitStart) / HIT_FADE_MS));
+          alpha = 1 - p;
+        }
+        ctx.globalAlpha = alpha;
+        ctx.beginPath();
+        ctx.arc(tx, ty, tg.r, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      // Movers
+      if (CFG.moversEnabled && movers.length > 0) {
+        for (const m of movers) {
+          const tx = m.x - player.x;
+          const ty = m.y - player.y;
+          ctx.beginPath();
+          ctx.arc(tx, ty, m.r, 0, Math.PI * 2);
+          let color;
+          if (m.hits >= 3) {
+            color = '#ff4444';
+          } else if (m.hits === 2) {
+            color = '#ff8800';
+          } else if (m.hits === 1) {
+            color = '#ffd200';
+          } else {
+            color = '#22cc66';
+          }
+          const isHit = nowMs() < (m.hitUntil || 0);
+          ctx.fillStyle = isHit ? '#22ff88' : color;
+          ctx.fill();
+        }
+      }
+      ctx.restore();
+    }
+    function drawCrosshair() {
+      if (!ctx || !canvas) return;
+      const t = nowMs();
+      const cxPos = canvas.width / 2;
+      const cyPos = canvas.height / 2;
+      const flashing = t < crosshairFlashUntil;
+      const scale = flashing ? 1.35 : 1.0;
+      ctx.save();
+      ctx.translate(cxPos, cyPos);
+      ctx.scale(scale, scale);
+      ctx.strokeStyle = '#00ffcc';
+      ctx.lineWidth = flashing ? 2 : 1;
+      ctx.beginPath();
+      ctx.moveTo(-10, 0);
+      ctx.lineTo(10, 0);
+      ctx.moveTo(0, -10);
+      ctx.lineTo(0, 10);
+      ctx.stroke();
+      if (flashing) {
+        ctx.beginPath();
+        ctx.arc(0, 0, 12, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+    function drawDevHUD() {
+      if (!showDevHud) return;
+      const devHud = devHudEl;
+      if (!devHud) return;
+      const pad = getPad(activeIndex);
+      if (!pad) {
+        devHud.innerHTML = `
+      <div class="h">
+        <div class="title">HUD DEV</div><div class="pill">I</div>
+      </div>
+      <div class="bad">No hay gamepad activo. Haz click y mueve el stick.</div>
+    `;
+        return;
+      }
+      const axesLine = pad.axes.map((v, i) => `a${i}=${fmt(v)}`).join('  ');
+      const btns = pad.buttons
+        .map((b, i) => (b.value > 0.05 ? `b${i}=${b.value.toFixed(2)}` : ''))
+        .filter(Boolean)
+        .join('  ');
+      const vel = flightGetVel();
+      const alive = targets.filter(tg => !tg.dead).length;
+      devHud.innerHTML = `
+    <div class="h">
+      <div class="title">HUD DEV</div>
+      <div class="pill">I</div>
+    </div>
+    <div class="row">
+      <div class="box">
+        <div><span class="k">Activo:</span> ${activeIndex + 1} - ${pad.id}</div>
+        <div><span class="k">Ejes:</span> roll=a${AXIS_ROLL} (inv), pitch=a${AXIS_PITCH} (inv), yaw=a${AXIS_YAW}</div>
+        <div><span class="k">Disparo:</span> b${TRIGGER_BUTTON}</div>
+        <div><span class="k">FA-off:</span> ${CFG.faOff ? 'ON' : 'OFF'} (F / Shift+F)</div>
+        <div><span class="k">Targets:</span> ${alive}/${targets.length} | regenOnHit=${CFG.regenOnHit ? 'ON' : 'OFF'} | randomSize=${CFG.randomTargetSize ? 'ON' : 'OFF'}</div>
+        <div><span class="k">Movers:</span> ${CFG.moversEnabled ? 'ON' : 'OFF'} | n=${(CFG.moversCount | 0)} | ${CFG.moversPattern} | sp=${CFG.moversSpeed.toFixed(2)} | avoid=${CFG.moversAvoid.toFixed(2)}</div>
+        <div><span class="k">Sens:</span> X=${CFG.sensX.toFixed(2)} Y=${CFG.sensY.toFixed(2)} Z=${CFG.sensZ.toFixed(2)} | baseR=${CFG.targetR}px</div>
+        <div><span class="k">FA accel:</span> X=${CFG.faAccX.toFixed(2)} Y=${CFG.faAccY.toFixed(2)} Z=${CFG.faAccZ.toFixed(2)}</div>
+        <div><span class="k">Vel:</span> vx=${vel.vx.toFixed(2)} vy=${vel.vy.toFixed(2)} w=${vel.w.toFixed(4)}</div>
+        <div><span class="k">Malla:</span> ${CFG.showGrid ? 'ON' : 'OFF'}</div>
+        <div><span class="k">Botones activos:</span> ${btns || '(ninguno)'}</div>
+      </div>
+      <div class="box">
+        <div><span class="k">Ejes (${pad.axes.length}):</span></div>
+        <div style="word-break:break-word">${axesLine}</div>
+      </div>
+    </div>
+  `;
+    }
+    /* ===================== UI CONFIG PANEL =======================
+     * Construimos la interfaz de configuración.  Utiliza <details> para
+     * secciones plegables y enlaza cada control con una propiedad de CFG.
+     */
+    function buildConfigUI() {
+      const id = s => `cfg_${s}`;
+      const panel = configPanelEl;
+      if (!panel) return;
+      panel.innerHTML = `
+    <div class="h">
+      <div class="title">CONFIG</div>
+      <div class="pill">C</div>
+    </div>
+    <div class="controls">
+      <details open>
+        <summary>Sensibilidades</summary>
+        <div class="control">
+          <label for="${id('sensX')}"><span class="k">Sens X</span> (roll)</label>
+          <div class="val" id="${id('sensX_val')}">${CFG.sensX.toFixed(2)}</div>
+          <input type="range" min="0.10" max="3.00" step="0.01" value="${CFG.sensX}" id="${id('sensX')}" style="grid-column:1 / span 2">
+        </div>
+        <div class="control">
+          <label for="${id('sensY')}"><span class="k">Sens Y</span> (pitch)</label>
+          <div class="val" id="${id('sensY_val')}">${CFG.sensY.toFixed(2)}</div>
+          <input type="range" min="0.10" max="3.00" step="0.01" value="${CFG.sensY}" id="${id('sensY')}" style="grid-column:1 / span 2">
+        </div>
+        <div class="control">
+          <label for="${id('sensZ')}"><span class="k">Sens Z</span> (yaw)</label>
+          <div class="val" id="${id('sensZ_val')}">${CFG.sensZ.toFixed(2)}</div>
+          <input type="range" min="0.10" max="3.00" step="0.01" value="${CFG.sensZ}" id="${id('sensZ')}" style="grid-column:1 / span 2">
+        </div>
+      </details>
+      <details open>
+        <summary>Targets</summary>
+        <div class="control">
+          <label for="${id('targetR')}"><span class="k">Target</span> tamaño</label>
+          <div class="val" id="${id('targetR_val')}">${CFG.targetR.toFixed(0)} px</div>
+          <input type="range" min="4" max="200" step="1" value="${CFG.targetR}" id="${id('targetR')}" style="grid-column:1 / span 2">
+        </div>
+        <div class="control">
+          <label for="${id('targetCount')}"><span class="k">Targets</span> cantidad</label>
+          <div class="val" id="${id('targetCount_val')}">${CFG.targetCount}</div>
+          <input type="range" min="0" max="20" step="1" value="${CFG.targetCount}" id="${id('targetCount')}" style="grid-column:1 / span 2">
+        </div>
+        <div class="check">
+          <label><input type="checkbox" id="${id('regenOnHit')}" ${CFG.regenOnHit ? 'checked' : ''}> Regenerar al <span class="k">acertar</span></label>
+          <span class="mini">si OFF: mata todos</span>
+        </div>
+        <div class="check">
+          <label><input type="checkbox" id="${id('randomTargetSize')}" ${CFG.randomTargetSize ? 'checked' : ''}> Tamaño <span class="k">aleatorio</span> por target</label>
+          <span class="mini">si OFF: uniforme</span>
+        </div>
+      </details>
+      <details open>
+        <summary>Curvas</summary>
+        <div class="check">
+          <label><input type="checkbox" id="${id('useCurve')}" ${CFG.useCurve ? 'checked' : ''}> <span class="k">Curva</span> activa</label>
+          <span class="mini">J-like</span>
+        </div>
+        <div class="check">
+          <label><input type="checkbox" id="${id('applyCurveToX')}" ${CFG.applyCurveToX ? 'checked' : ''}> Aplicar curva también a <span class="k">Z</span> (yaw)</label>
+          <span class="mini">delicado</span>
+        </div>
+        <div class="row">
+          <div class="box">
+            <div class="mini"><span class="k">Curva X</span> (roll): CP / VA</div>
+            <div class="control" style="grid-template-columns:1fr 1fr; gap:10px;">
+              <div>
+                <div class="mini">CP: <span id="${id('cpX_val')}">${CFG.cpX}</span></div>
+                <input type="range" min="0" max="60" step="1" value="${CFG.cpX}" id="${id('cpX')}">
+              </div>
+              <div>
+                <div class="mini">VA: <span id="${id('vaX_val')}">${CFG.vaX}</span></div>
+                <input type="range" min="1" max="10" step="1" value="${CFG.vaX}" id="${id('vaX')}">
+              </div>
+            </div>
+          </div>
+          <div class="box">
+            <div class="mini"><span class="k">Curva Y</span> (pitch): CP / VA</div>
+            <div class="control" style="grid-template-columns:1fr 1fr; gap:10px;">
+              <div>
+                <div class="mini">CP: <span id="${id('cpY_val')}">${CFG.cpY}</span></div>
+                <input type="range" min="0" max="60" step="1" value="${CFG.cpY}" id="${id('cpY')}">
+              </div>
+              <div>
+                <div class="mini">VA: <span id="${id('vaY_val')}">${CFG.vaY}</span></div>
+                <input type="range" min="1" max="10" step="1" value="${CFG.vaY}" id="${id('vaY')}">
+              </div>
+            </div>
+          </div>
+        </div>
+      </details>
+      <details>
+        <summary>Display</summary>
+        <div class="check">
+          <label><input type="checkbox" id="${id('showGrid')}" ${CFG.showGrid ? 'checked' : ''}> Mostrar <span class="k">malla</span></label>
+          <span class="mini">cuadrados</span>
+        </div>
+        <div class="check">
+          <label><input type="checkbox" id="${id('blackBg')}" ${CFG.blackBg ? 'checked' : ''}> Fondo <span class="k">negro</span> total</label>
+          <span class="mini">sin textura</span>
+        </div>
+      </details>
+      <details>
+        <summary>FA‑off (inercia)</summary>
+        <div class="check">
+          <label><input type="checkbox" id="${id('faOff')}" ${CFG.faOff ? 'checked' : ''}> <span class="k">FA-off</span></label>
+          <span class="mini">F / Shift+F</span>
+        </div>
+        <div class="control">
+          <label for="${id('faAccX')}"><span class="k">FA Accel X</span> (roll)</label>
+          <div class="val" id="${id('faAccX_val')}">${CFG.faAccX.toFixed(2)}</div>
+          <input type="range" min="0.10" max="3.00" step="0.01" value="${CFG.faAccX}" id="${id('faAccX')}" style="grid-column:1 / span 2">
+        </div>
+        <div class="control">
+          <label for="${id('faAccY')}"><span class="k">FA Accel Y</span> (pitch)</label>
+          <div class="val" id="${id('faAccY_val')}">${CFG.faAccY.toFixed(2)}</div>
+          <input type="range" min="0.10" max="3.00" step="0.01" value="${CFG.faAccY}" id="${id('faAccY')}" style="grid-column:1 / span 2">
+        </div>
+        <div class="control">
+          <label for="${id('faAccZ')}"><span class="k">FA Accel Z</span> (yaw)</label>
+          <div class="val" id="${id('faAccZ_val')}">${CFG.faAccZ.toFixed(2)}</div>
+          <input type="range" min="0.10" max="3.00" step="0.01" value="${CFG.faAccZ}" id="${id('faAccZ')}" style="grid-column:1 / span 2">
+        </div>
+      </details>
+      <details open>
+        <summary>Movers</summary>
+        <div class="check">
+          <label><input type="checkbox" id="${id('moversEnabled')}" ${CFG.moversEnabled ? 'checked' : ''}> <span class="k">Activos</span></label>
+          <span class="mini">extra</span>
+        </div>
+        <div class="control">
+          <label for="${id('moversCount')}"><span class="k">Cantidad</span></label>
+          <div class="val" id="${id('moversCount_val')}">${CFG.moversCount}</div>
+          <input type="range" min="0" max="5" step="1" value="${CFG.moversCount}" id="${id('moversCount')}" style="grid-column:1 / span 2">
+        </div>
+        <div class="control">
+          <label for="${id('moversR')}"><span class="k">Tamaño</span></label>
+          <div class="val" id="${id('moversR_val')}">${CFG.moversR.toFixed(0)} px</div>
+          <input type="range" min="4" max="60" step="1" value="${CFG.moversR}" id="${id('moversR')}" style="grid-column:1 / span 2">
+        </div>
+        <div class="check">
+          <label><input type="checkbox" id="${id('moversFlee')}" ${CFG.moversFlee ? 'checked' : ''}> <span class="k">Huir del jugador</span></label>
+          <span class="mini">reacciona a la velocidad</span>
+        </div>
+        <div class="control">
+          <label for="${id('moversSpeed')}"><span class="k">Velocidad</span></label>
+          <div class="val" id="${id('moversSpeed_val')}">${CFG.moversSpeed.toFixed(2)}</div>
+          <input type="range" min="0.10" max="3.00" step="0.01" value="${CFG.moversSpeed}" id="${id('moversSpeed')}" style="grid-column:1 / span 2">
+        </div>
+        <!-- Controles adicionales para la velocidad de huida al recibir impactos -->
+        <div class="control">
+          <label for="${id('moversHit1Boost')}"><span class="k">Boost 1º impacto</span></label>
+          <div class="val" id="${id('moversHit1Boost_val')}">${(CFG.moversHit1Boost * 100).toFixed(0)}%</div>
+          <input type="range" min="0.00" max="7.00" step="0.05" value="${CFG.moversHit1Boost}" id="${id('moversHit1Boost')}" style="grid-column:1 / span 2">
+        </div>
+        <div class="control">
+          <label for="${id('moversHit2Boost')}"><span class="k">Boost 2º impacto</span></label>
+          <div class="val" id="${id('moversHit2Boost_val')}">${(CFG.moversHit2Boost * 100).toFixed(0)}%</div>
+          <input type="range" min="0.00" max="7.00" step="0.05" value="${CFG.moversHit2Boost}" id="${id('moversHit2Boost')}" style="grid-column:1 / span 2">
+        </div>
+        <div class="control">
+          <label for="${id('moversAvoid')}"><span class="k">Esquiva</span></label>
+          <div class="val" id="${id('moversAvoid_val')}">${CFG.moversAvoid.toFixed(2)}</div>
+          <input type="range" min="0.00" max="3.00" step="0.01" value="${CFG.moversAvoid}" id="${id('moversAvoid')}" style="grid-column:1 / span 2">
+        </div>
+      </details>
+      <div class="mini">Cierra con <span class="k">C</span>. <span class="k">Espacio</span> respawnea targets.</div>
+    </div>
+  `;
+      // helpers para ranges
+      const bindRange = (key, fmtVal, after) => {
+        const el = document.getElementById(id(key));
+        const valEl = document.getElementById(id(key + '_val'));
+        if (!el) return;
+        el.addEventListener('input', () => {
+          CFG[key] = parseFloat(el.value);
+          if (valEl) valEl.textContent = fmtVal(CFG[key]);
+          if (after) after();
+        });
+      };
+      bindRange('sensX', v => v.toFixed(2));
+      bindRange('sensY', v => v.toFixed(2));
+      bindRange('sensZ', v => v.toFixed(2));
+      bindRange('faAccX', v => v.toFixed(2));
+      bindRange('faAccY', v => v.toFixed(2));
+      bindRange('faAccZ', v => v.toFixed(2));
+      bindRange('targetR', v => `${v.toFixed(0)} px`, () => {
+        if (!CFG.randomTargetSize) applyUniformRadiusToAll();
+      });
+      bindRange('targetCount', v => `${Math.round(v)}`, () => {
+        CFG.targetCount = Math.round(CFG.targetCount);
+        respawnAllTargets();
+        ensureMoversCount();
+        for (let i = 0; i < movers.length; i++) respawnMover(movers[i]);
+      });
+      bindRange('moversCount', v => `${v | 0}`, () => {
+        CFG.moversCount = (CFG.moversCount | 0);
+        ensureMoversCount();
+        for (let i = 0; i < movers.length; i++) respawnMover(movers[i]);
+      });
+      bindRange('moversR', v => `${Math.round(v)} px`, () => {
+        CFG.moversR = Math.round(CFG.moversR);
+        for (let i = 0; i < movers.length; i++) {
+          movers[i].r = CFG.moversR;
+          respawnMover(movers[i]);
+        }
+      });
+      bindRange('moversSpeed', v => v.toFixed(2));
+      bindRange('moversAvoid', v => v.toFixed(2));
+      // Nuevos controles para ajustar la velocidad extra tras los impactos
+      bindRange('moversHit1Boost', v => `${(v * 100).toFixed(0)}%`);
+      bindRange('moversHit2Boost', v => `${(v * 100).toFixed(0)}%`);
+      const bindMini = (key, outId) => {
+        const el = document.getElementById(id(key));
+        const out = document.getElementById(outId);
+        if (!el) return;
+        el.addEventListener('input', () => {
+          CFG[key] = parseInt(el.value, 10);
+          if (out) out.textContent = CFG[key];
+        });
+      };
+      bindMini('cpX', id('cpX_val'));
+      bindMini('vaX', id('vaX_val'));
+      bindMini('cpY', id('cpY_val'));
+      bindMini('vaY', id('vaY_val'));
+      const bindCheck = (key, after) => {
+        const el = document.getElementById(id(key));
+        if (!el) return;
+        el.addEventListener('change', () => {
+          CFG[key] = !!el.checked;
+          if (after) after();
+        });
+      };
+      bindCheck('useCurve');
+      bindCheck('applyCurveToX');
+      bindCheck('showGrid');
+      bindCheck('blackBg');
+      bindCheck('regenOnHit', () => respawnAllTargets());
+      bindCheck('randomTargetSize', () => {
+        if (CFG.randomTargetSize) {
+          for (const t of targets) t.r = pickTargetRadius();
+        } else {
+          applyUniformRadiusToAll();
+        }
+      });
+      bindCheck('moversEnabled', () => {
+        ensureMoversCount();
+        if (!CFG.moversEnabled) return;
+        for (let i = 0; i < movers.length; i++) respawnMover(movers[i]);
+      });
+      // Toggle FA-off
+      const faEl = document.getElementById(id('faOff'));
+      if (faEl) {
+        faEl.addEventListener('change', () => {
+          CFG.faOff = !!faEl.checked;
+          if (!CFG.faOff) flightReset();
+        });
+      }
+      bindCheck('moversFlee');
+    }
+    /* ===================== GESTIÓN DISPARO =======================
+     * Controla el gatillo, golpea blancos o movers y reproduce sonidos.
+     */
+    function playShot() {
+      try {
+        if (shotAudio) {
+          shotAudio.currentTime = 0;
+          shotAudio.play().catch(() => {});
+        }
+      } catch (_) {}
+    }
+    function playSuccessWithDelay() {
+      const t = nowMs();
+      if (t - lastSuccessAt < SUCCESS_COOLDOWN_MS) return;
+      lastSuccessAt = t;
+      setTimeout(() => {
+        try {
+          if (successAudio) {
+            successAudio.currentTime = 0;
+            successAudio.play().catch(() => {});
+          }
+        } catch (_) {}
+      }, SUCCESS_DELAY_MS);
+    }
+    function shoot() {
+      const t = nowMs();
+      crosshairFlashUntil = t + CROSSHAIR_FLASH_MS;
+      playShot();
+      // movers
+      const mi = hitTestMovers();
+      if (mi >= 0) {
+        const m = movers[mi];
+        m.hitUntil = t + 140;
+        m.hits = (m.hits | 0) + 1;
+        // Ajustamos el escapeBoost según impactos usando los multiplicadores configurables.
+        let esc = 0;
+        if (m.hits === 1) {
+          esc = CFG.moversHit1Boost || 0;
+        } else if (m.hits >= 2) {
+          esc = (CFG.moversHit1Boost || 0) + (CFG.moversHit2Boost || 0);
+        }
+        m.escapeBoost = esc;
+        m.lastHitTime = t;
+        if (m.hits >= MOVERS_MAX_HITS) {
+          // Al agotar vidas regeneramos automáticamente el mover
+          respawnMover(m);
+          playSuccessWithDelay();
+        }
+        return;
+      }
+      // targets
+      let bestIdx = -1;
+      let bestD = Infinity;
+      for (let i = 0; i < targets.length; i++) {
+        const tg = targets[i];
+        if (tg.dead) continue;
+        if (tg.hitStart) continue;
+        const dx = tg.x - player.x;
+        const dy = tg.y - player.y;
+        const d = Math.hypot(dx, dy);
+        if (d < tg.r && d < bestD) {
+          bestD = d;
+          bestIdx = i;
+        }
+      }
+      if (bestIdx >= 0) {
+        targets[bestIdx].hitStart = t;
+        playSuccessWithDelay();
+      } else {
+        missFlashUntil = t + MISS_FLASH_MS;
+      }
+    }
+    function handleTrigger(pad) {
+      const v = pad.buttons[TRIGGER_BUTTON]?.value || 0;
+      if (v > 0.8 && !triggerPressed) {
+        triggerPressed = true;
+        shoot();
+      }
+      if (v < 0.2) triggerPressed = false;
+    }
+    function isTypingInUI() {
+      const el = document.activeElement;
+      if (!el) return false;
+      const tag = (el.tagName || '').toLowerCase();
+      return tag === 'input' || tag === 'textarea' || tag === 'select';
+    }
+    function updatePanelStacking() {
+      if (!devHudEl || !configPanelEl) return;
+      if (showDevHud && showConfig) {
+        devHudEl.classList.add('stack-dev');
+        configPanelEl.classList.add('stack-cfg');
+      } else {
+        devHudEl.classList.remove('stack-dev');
+        configPanelEl.classList.remove('stack-cfg');
+      }
+    }
+    function setFaOff(on) {
+      CFG.faOff = !!on;
+      const faEl = document.getElementById('cfg_faOff');
+      if (faEl) faEl.checked = CFG.faOff;
+      if (!CFG.faOff) flightReset();
+    }
+    function resetFaInertia() {
+      flightReset();
+    }
+    /* ======================= LOOP PRINCIPAL =======================
+     * Actualiza la lógica y dibuja la escena en cada frame.
+     */
+    function update() {
+      const pad = getPad(activeIndex);
+      if (!pad) return;
+      const t = nowMs();
+      let dtN = clamp((t - lastFrameMs) / 16.6667, 0.25, 3);
+      lastFrameMs = t;
+      let roll = cleanAxis(-(pad.axes[AXIS_ROLL] ?? 0));
+      let pitch = cleanAxis(-(pad.axes[AXIS_PITCH] ?? 0));
+      let yaw = cleanAxis((pad.axes[AXIS_YAW] ?? 0));
+      if (CFG.useCurve) {
+        roll = applyJCurve(roll, CFG.cpX, CFG.vaX);
+        pitch = applyJCurve(pitch, CFG.cpY, CFG.vaY);
+        if (CFG.applyCurveToX) {
+          yaw = applyJCurve(yaw, CFG.cpX, CFG.vaX);
+        }
+      }
+      if (!CFG.faOff) {
+        const ar = Math.abs(roll);
+        if (ar > ROLL_LOCK_THRESHOLD) {
+          if (Math.abs(pitch) < ar * ROLL_LOCK_FACTOR) pitch = 0;
+          if (Math.abs(yaw) < ar * ROLL_LOCK_FACTOR) yaw = 0;
+        }
+      }
+      pitch *= CFG.sensY;
+      yaw   *= CFG.sensZ;
+      // Rotación (roll)
+      if (CFG.faOff) {
+        const rollIn = clamp(roll, -1, 1);
+        const angAccel = ROLL_SPEED_BASE * 1.8 * CFG.faAccX;
+        const maxW = ROLL_SPEED_BASE * 10 * CFG.sensX;
+        const rr = flightStepRoll(rollIn, dtN, angAccel, maxW);
+        rollAngle += rr.dAngle;
+      } else {
+        const rollSpeed = ROLL_SPEED_BASE * CFG.sensX;
+        if (roll !== 0) rollAngle += roll * rollSpeed;
+      }
+      // Movimiento (pitch/yaw)
+      if (CFG.faOff) {
+        const yawIn   = clamp(yaw, -1, 1);
+        const pitchIn = clamp(pitch, -1, 1);
+        const axScreen = yawIn * SPEED_BASE * 0.55 * CFG.faAccZ;
+        const ayScreen = pitchIn * SPEED_BASE * 0.55 * CFG.faAccY;
+        const cos = Math.cos(rollAngle);
+        const sin = Math.sin(rollAngle);
+        const axWorld = (axScreen * cos) + (ayScreen * sin);
+        const ayWorld = (-axScreen * sin) + (ayScreen * cos);
+        const sensMove = Math.max(CFG.sensY, CFG.sensZ);
+        const maxV = SPEED_BASE * 12 * sensMove;
+        const s = flightStepMove(axWorld, ayWorld, dtN, maxV);
+        player.x += s.dx;
+        player.y += s.dy;
+      } else {
+        let moveX = 0;
+        let moveY = 0;
+        if (yaw !== 0 || pitch !== 0) {
+          if (USE_DOMINANT_MOVEMENT) {
+            const dom = dominantAxis(yaw, pitch);
+            yaw = dom.x;
+            pitch = dom.y;
+          }
+          const cos = Math.cos(rollAngle);
+          const sin = Math.sin(rollAngle);
+          moveX = (yaw * cos) + (pitch * sin);
+          moveY = (-yaw * sin) + (pitch * cos);
+        }
+        if (moveX !== 0 || moveY !== 0) {
+          player.x += moveX * SPEED_BASE;
+          player.y += moveY * SPEED_BASE;
+        }
+      }
+      // Velocidad de la mirilla para la huida
+      let playerSpeed = 0;
+      {
+        const dx = player.x - prevPlayerX;
+        const dy = player.y - prevPlayerY;
+        if (dtN > 0) {
+          playerSpeed = Math.hypot(dx, dy) / dtN;
+        }
+        prevPlayerX = player.x;
+        prevPlayerY = player.y;
+      }
+      updateMovers(dtN, playerSpeed);
+      // Blancos: gestionar golpes y respawns
+      for (let i = 0; i < targets.length; i++) {
+        const tg = targets[i];
+        if (tg.dead) continue;
+        if (tg.hitStart) {
+          if (t - tg.hitStart >= HIT_FADE_MS) {
+            if (CFG.regenOnHit) {
+              targets[i] = spawnTargetNearPlayer();
+            } else {
+              tg.dead = true;
+              tg.hitStart = 0;
+            }
+          }
+        }
+      }
+      if (!CFG.regenOnHit) {
+        const allDead = targets.length > 0 && targets.every(tt => tt.dead);
+        if (allDead) respawnAllTargets();
+      }
+      // Gestión disparo
+      handleTrigger(pad);
+    }
+    function draw() {
+      if (!ctx || !canvas) return;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawBackground();
+      drawTargets();
+      drawCrosshair();
+      drawDevHUD();
+    }
+    function loop() {
+      update();
+      draw();
+      requestAnimationFrame(loop);
+    }
+    /* ====================== INICIALIZACIÓN =======================
+     * Se ejecuta cuando el DOM está cargado: prepara canvas,
+     * referencias, UI y arranca el bucle de juego.
+     */
+    window.addEventListener('DOMContentLoaded', () => {
+      const canvasEl = document.getElementById('c');
+      const cCtx = canvasEl.getContext('2d');
+      const devEl = document.getElementById('devHud');
+      const cfgEl = document.getElementById('configPanel');
+      const toast = document.getElementById('toast');
+      const shotEl = document.getElementById('shot');
+      const successEl = document.getElementById('success');
+      initDomRefs(canvasEl, cCtx, devEl, cfgEl, toast, shotEl, successEl);
+      // Redimensiona canvas
+      function resize() {
+        canvasEl.width = innerWidth;
+        canvasEl.height = innerHeight;
+      }
+      window.addEventListener('resize', resize);
+      resize();
+      buildConfigUI();
+      setTimeout(() => {
+        if (toastEl) toastEl.classList.add('hide');
+      }, 2600);
+      // Teclado
+      window.addEventListener('keydown', (e) => {
+        if (isTypingInUI()) return;
+        if (e.repeat) return;
+        const k = (e.key || '').toLowerCase();
+        if (k === 'c') {
+          showConfig = !showConfig;
+          if (configPanelEl) configPanelEl.classList.toggle('hidden', !showConfig);
+          updatePanelStacking();
+          e.preventDefault();
+          return;
+        }
+        if (k === 'i') {
+          showDevHud = !showDevHud;
+          if (devHudEl) devHudEl.classList.toggle('hidden', !showDevHud);
+          updatePanelStacking();
+          e.preventDefault();
+          return;
+        }
+        if (k === 'f') {
+          if (e.shiftKey) {
+            resetFaInertia();
+          } else {
+            setFaOff(!CFG.faOff);
+          }
+          e.preventDefault();
+          return;
+        }
+        if (k === ' ' || e.code === 'Space') {
+          missFlashUntil = 0;
+          respawnAllTargets();
+          ensureMoversCount();
+          for (let i = 0; i < movers.length; i++) respawnMover(movers[i]);
+          e.preventDefault();
+          return;
+        }
+      });
+      // Inicializamos blancos y movers
+      respawnAllTargets();
+      ensureMoversCount();
+      // Comenzar bucle
+      loop();
+    });
+  })();
+  </script>
+</body>
+</html>
