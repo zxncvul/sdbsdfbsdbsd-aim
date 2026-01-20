@@ -1384,16 +1384,11 @@ export function updateMovers(dtN, playerSpeed = 0) {
       }
 
       // ===================== Ajuste de velocidad por impactos =====================
-      // Cuando la opción de huida (`CFG.moversFlee`) está desactivada, los
-      // movers no deben alejarse del jugador tras recibir disparos.  En su
-      // lugar incrementan su velocidad manteniendo la trayectoria de su
-      // patrón.  Si `m.escapeBoost` es mayor que cero (indica cuántos
-      // impactos ha recibido), multiplicamos la velocidad deseada por
-      // (1 + escapeBoost) para acelerar su desplazamiento.  Esto permite
-      // que los sliders de “Boost 1º impacto” y “Boost 2º impacto” en la
-      // configuración surtan efecto incluso cuando el modo flee está
-      // desactivado.
-      if (!CFG.moversFlee && m.escapeBoost > 0) {
+      // Tras recibir impactos, los movers aceleran su patrón de movimiento
+      // según los boosts configurados.  Este incremento debe aplicarse
+      // tanto si el modo flee está activo como si no, pero la huida sólo
+      // se añadirá cuando `CFG.moversFlee` esté habilitado.
+      if (m.escapeBoost > 0) {
         const boostFactor = 1 + m.escapeBoost;
         desVx *= boostFactor;
         desVy *= boostFactor;
@@ -1406,10 +1401,9 @@ export function updateMovers(dtN, playerSpeed = 0) {
         svy = vScr.sy * 0.7;
       }
       const spd = Math.hypot(svx, svy) || 1;
-      // El límite de velocidad debe escalar con el boost de impactos
-      // para que el efecto sea perceptible y no quede capado.
-      const boostCap = 1 + (m.escapeBoost || 0);
-      const maxSp = 8.0 * baseSpeed * boostCap;
+      // El límite de velocidad debe respetar la velocidad máxima base,
+      // incluso tras aplicar boosts por impactos.
+      const maxSp = 8.0 * baseSpeed;
       if (spd > maxSp) {
         svx = (svx / spd) * maxSp;
         svy = (svy / spd) * maxSp;
@@ -1594,15 +1588,10 @@ export function updateMovers(dtN, playerSpeed = 0) {
     }
 
     // ===================== Ajuste de velocidad por impactos =====================
-    // Cuando el modo flee (`CFG.moversFlee`) está desactivado, los movers
-    // no deben huir del jugador tras recibir disparos.  En su lugar,
-    // aceleran su patrón de movimiento en función del número de impactos.
-    // Si `m.escapeBoost` es mayor que cero, multiplicamos la velocidad
-    // deseada por (1 + escapeBoost) para reflejar el incremento elegido
-    // mediante los sliders de configuración.  Esto se aplica antes de
-    // calcular las fuerzas de esquiva para que el incremento afecte al
-    // movimiento base sin crear una fuerza radial de huida.
-    if (!CFG.moversFlee && m.escapeBoost > 0) {
+    // Tras recibir impactos, los movers aceleran su patrón de movimiento
+    // según los boosts configurados.  La huida sólo se añade cuando el
+    // modo flee está activo, pero la aceleración debe aplicarse siempre.
+    if (m.escapeBoost > 0) {
       const boostFactor = 1 + m.escapeBoost;
       desVx *= boostFactor;
       desVy *= boostFactor;
@@ -1664,10 +1653,9 @@ export function updateMovers(dtN, playerSpeed = 0) {
     }
     // Limitamos la velocidad máxima
     const spd = Math.hypot(svx, svy) || 1;
-    // Escalamos el cap de velocidad para que el boost de impactos
-    // no quede anulado por el límite máximo.
-    const boostCap = 1 + (m.escapeBoost || 0);
-    const maxSp = 8.0 * speed * boostCap;
+    // El cap de velocidad respeta la velocidad máxima base, incluso tras
+    // aplicar boosts por impactos.
+    const maxSp = 8.0 * speed;
     if (spd > maxSp) {
       svx = (svx / spd) * maxSp;
       svy = (svy / spd) * maxSp;
