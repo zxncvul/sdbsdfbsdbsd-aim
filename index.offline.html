@@ -553,7 +553,10 @@
           svy = vs.sy * 0.7;
         }
         const spd = Math.hypot(svx, svy) || 1;
-        const maxSp = 8.0 * speed;
+        // Escalamos el cap de velocidad para que los boosts por impacto
+        // sean visibles y no queden limitados por el máximo fijo.
+        const boostCap = 1 + (m.escapeBoost || 0);
+        const maxSp = 8.0 * speed * boostCap;
         if (spd > maxSp) {
           svx = (svx / spd) * maxSp;
           svy = (svy / spd) * maxSp;
