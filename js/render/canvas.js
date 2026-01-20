@@ -7,17 +7,16 @@
  * cambia el tamaño de la ventana.
  */
 
-import * as state from '../state.js';
-
 /**
  * Inicializa el canvas con el id proporcionado.  Ajusta su tamaño a
  * `innerWidth` e `innerHeight` y registra un listener para mantenerlo a
- * pantalla completa.  También actualiza las referencias en `state.js`.
+ * pantalla completa.
  *
  * @param {string} id identificador del elemento `<canvas>`
  */
 export function initCanvas(id) {
   const canvas = document.getElementById(id);
+  if (!canvas) return null;
   const ctx = canvas.getContext('2d');
   function resize() {
     canvas.width = innerWidth;
@@ -25,8 +24,5 @@ export function initCanvas(id) {
   }
   window.addEventListener('resize', resize);
   resize();
-  // Guardamos referencias en el estado global
-  state.canvas = canvas;
-  state.ctx = ctx;
   return { canvas, ctx, resize };
 }
