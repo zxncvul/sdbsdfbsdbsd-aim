@@ -143,17 +143,17 @@ export function buildConfigUI() {
         <div class="control">
           <label for="${id('faAccX')}"><span class="k">FA Accel X</span> (roll)</label>
           <div class="val" id="${id('faAccX_val')}">${CFG.faAccX.toFixed(2)}</div>
-          <input type="range" min="0.10" max="3.00" step="0.01" value="${CFG.faAccX}" id="${id('faAccX')}" style="grid-column:1 / span 2">
+          <input type="range" min="0.00" max="3.00" step="0.01" value="${CFG.faAccX}" id="${id('faAccX')}" style="grid-column:1 / span 2">
         </div>
         <div class="control">
           <label for="${id('faAccY')}"><span class="k">FA Accel Y</span> (pitch)</label>
           <div class="val" id="${id('faAccY_val')}">${CFG.faAccY.toFixed(2)}</div>
-          <input type="range" min="0.10" max="3.00" step="0.01" value="${CFG.faAccY}" id="${id('faAccY')}" style="grid-column:1 / span 2">
+          <input type="range" min="0.00" max="3.00" step="0.01" value="${CFG.faAccY}" id="${id('faAccY')}" style="grid-column:1 / span 2">
         </div>
         <div class="control">
           <label for="${id('faAccZ')}"><span class="k">FA Accel Z</span> (yaw)</label>
           <div class="val" id="${id('faAccZ_val')}">${CFG.faAccZ.toFixed(2)}</div>
-          <input type="range" min="0.10" max="3.00" step="0.01" value="${CFG.faAccZ}" id="${id('faAccZ')}" style="grid-column:1 / span 2">
+          <input type="range" min="0.00" max="3.00" step="0.01" value="${CFG.faAccZ}" id="${id('faAccZ')}" style="grid-column:1 / span 2">
         </div>
       </details>
       <details open>
