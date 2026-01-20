@@ -1406,7 +1406,10 @@ export function updateMovers(dtN, playerSpeed = 0) {
         svy = vScr.sy * 0.7;
       }
       const spd = Math.hypot(svx, svy) || 1;
-      const maxSp = 8.0 * baseSpeed;
+      // El límite de velocidad debe escalar con el boost de impactos
+      // para que el efecto sea perceptible y no quede capado.
+      const boostCap = 1 + (m.escapeBoost || 0);
+      const maxSp = 8.0 * baseSpeed * boostCap;
       if (spd > maxSp) {
         svx = (svx / spd) * maxSp;
         svy = (svy / spd) * maxSp;
@@ -1661,7 +1664,10 @@ export function updateMovers(dtN, playerSpeed = 0) {
     }
     // Limitamos la velocidad máxima
     const spd = Math.hypot(svx, svy) || 1;
-    const maxSp = 8.0 * speed;
+    // Escalamos el cap de velocidad para que el boost de impactos
+    // no quede anulado por el límite máximo.
+    const boostCap = 1 + (m.escapeBoost || 0);
+    const maxSp = 8.0 * speed * boostCap;
     if (spd > maxSp) {
       svx = (svx / spd) * maxSp;
       svy = (svy / spd) * maxSp;

@@ -21,11 +21,11 @@ Debido a que los navegadores modernos aplican restricciones de seguridad al carg
 python3 -m http.server 8000
 ```
 
-3. Abre tu navegador y visita `http://localhost:8000`.  Haz clic en `index.html` para iniciar el juego.
+3. Abre tu navegador y visita `http://localhost:8000/index.html`.  `index.html` es el punto de entrada canónico y funciona tanto en Live Server como con `python -m http.server`.
 
 ### Opción sin servidor (modo build‑free)
 
-Para entornos donde no es posible lanzar un servidor local existe **`index.offline.html`**.  Esta versión reutiliza los mismos módulos que la versión principal.  Los navegadores modernos suelen permitir importar módulos desde `file://`, pero si tu navegador muestra un error relacionado con CORS al abrirla mediante doble clic, utiliza la opción recomendada (servidor local) o inicia un servidor con Python tal y como se explica arriba.
+Para entornos donde no es posible lanzar un servidor local existe **`index.offline.html`** como alternativa.  La versión recomendada sigue siendo `index.html` con un servidor estático (Live Server o `python -m http.server`), que evita problemas de CORS y garantiza que los módulos ES se carguen sin restricciones.
 
 ### Problemas comunes y soluciones
 
@@ -74,8 +74,10 @@ solr‑aim‑trainer/
 - **Sensibilidades y aceleraciones**: Están en `js/config.js` dentro del objeto `CFG`.  Puedes ajustar `sensX`, `sensY`, `sensZ` o las aceleraciones `faAccX`, `faAccY`, `faAccZ` para modificar la respuesta del mando.
 - **Ejes del mando**: Los índices de los ejes (roll, pitch, yaw) y del botón de disparo están definidos al inicio de `js/config.js`.  Modifica `AXIS_ROLL`, `AXIS_PITCH`, `AXIS_YAW` o `TRIGGER_BUTTON` si tu mando tiene un mapeo diferente.
 - **Cantidad y tamaño de los targets**: Los valores iniciales de `CFG.targetCount` y `CFG.targetR` definen cuántos blancos aparecen y su tamaño base.  También puedes activar el tamaño aleatorio con `CFG.randomTargetSize`.
- - **Movers**: `CFG.moversEnabled` activa o desactiva los movers.  `CFG.moversCount` establece cuántos hay, `CFG.moversR` su tamaño (radio en píxeles), `CFG.moversSpeed` su velocidad base y `CFG.moversAvoid` la fuerza con la que evitan los blancos y entre ellos.  `CFG.moversFlee` activa el comportamiento de huida.
-   Los movers ya no tienen un patrón fijo (`CFG.moversPattern` se mantiene sólo por compatibilidad); en su lugar seleccionan patrones aleatorios y los encadenan automáticamente.
+- **Movers**: `CFG.moversEnabled` activa o desactiva los movers.  `CFG.moversCount` establece cuántos hay, `CFG.moversR` su tamaño (radio en píxeles), `CFG.moversSpeed` su velocidad base y `CFG.moversAvoid` la fuerza con la que evitan los blancos y entre ellos.
+  - `CFG.moversFlee` activa el comportamiento de huida: con ON se alejan radialmente del jugador con un componente lateral y reaccionan al movimiento del jugador; con OFF nunca aplican fuerza de huida y sólo aceleran su patrón al recibir impactos.
+  - `CFG.moversHit1Boost` y `CFG.moversHit2Boost` incrementan la velocidad al primer y segundo impacto (boost acumulativo).  El límite de velocidad escala con ese boost para que el cambio sea visible.
+  - Los movers ya no tienen un patrón fijo (`CFG.moversPattern` se mantiene sólo por compatibilidad); en su lugar seleccionan patrones aleatorios y los encadenan automáticamente.
 - **Curvas y deadzone**: Las curvas J y otros ajustes de deadzone están en `js/config.js`.  Cambia `useCurve`, `cpX`, `vaX`, `cpY`, `vaY` o `DEADZONE` y `NOISE_SNAP` para adaptar la curva de respuesta del mando.
 
 Lee los comentarios al principio de cada archivo JavaScript para comprender qué hace cada módulo y qué zonas son seguras (pueden modificarse) o peligrosas (mejor no tocarlas si no estás seguro).
