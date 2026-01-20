@@ -192,13 +192,19 @@ function resetFaInertia() {
 // Bucle de actualización lógica
 function update() {
   const pad = getPad(state.activeIndex);
-  if (!pad) return;
   const t = nowMs();
   let dtN = clamp((t - state.lastFrameMs) / 16.6667, 0.25, 3);
   state.lastFrameMs = t;
-  let roll = cleanAxis(-(pad.axes[AXIS_ROLL] ?? 0));
-  let pitch = cleanAxis(-(pad.axes[AXIS_PITCH] ?? 0));
-  let yaw = cleanAxis((pad.axes[AXIS_YAW] ?? 0));
+  let roll = 0;
+  let pitch = 0;
+  let yaw = 0;
+  if (pad) {
+    roll = cleanAxis(-(pad.axes[AXIS_ROLL] ?? 0));
+    pitch = cleanAxis(-(pad.axes[AXIS_PITCH] ?? 0));
+    yaw = cleanAxis((pad.axes[AXIS_YAW] ?? 0));
+  } else {
+    state.triggerPressed = false;
+  }
   if (CFG.useCurve) {
     roll = applyJCurve(roll, CFG.cpX, CFG.vaX);
     pitch = applyJCurve(pitch, CFG.cpY, CFG.vaY);
@@ -309,7 +315,9 @@ function update() {
     }
   }
   // Gestionar el disparo
-  handleTrigger(pad);
+  if (pad) {
+    handleTrigger(pad);
+  }
 }
 
 // Dibuja la escena completa
