@@ -71,7 +71,7 @@ export const CFG = {
   targetR: 10,
 
   // Número de blancos en pantalla (1..20)
-  targetCount: 1,
+  targetCount: 0,
 
   // Si es true, al acertar un blanco éste reaparece inmediatamente.
   // Si es false, sólo reaparecerán cuando se eliminen todos.
@@ -106,7 +106,7 @@ export const CFG = {
   // Ajustamos el número predeterminado de movers a un valor mayor
   // que cero para facilitar las pruebas de la nueva lógica.  El panel
   // de configuración sigue permitiendo cambiar esta cantidad.
-  moversCount: 3,
+  moversCount: 0,
   // Patrón de movimiento se ignora en la nueva versión.  Los movers
   // seleccionan patrones aleatorios y los encadenan automáticamente.  Este
   // campo se conserva por compatibilidad pero no se usa.
@@ -132,5 +132,24 @@ export const CFG = {
   // un valor de 0.40 y 0.60 dará como resultado un multiplicador de
   // 1.0 + 0.40 + 0.60 = 2.0 al segundo impacto.
   moversHit1Boost: 0.40,
-  moversHit2Boost: 0.60
+  moversHit2Boost: 0.60,
+
+  // Modo de juego: classic | matrix | split
+  gameMode: 'classic',
+
+  // Modo Matrix: targets en línea recta desde los bordes
+  matrixSpawnMs: 700,
+  matrixSpeed: 4.0,
+  matrixTargetR: 14,
+  matrixRandomSize: false,
+  matrixFromTop: true,
+  matrixFromBottom: false,
+  matrixFromLeft: false,
+  matrixFromRight: false,
+
+  // Modo Split: pelotas grandes que se dividen
+  splitBallCount: 1,
+  splitBallSpeed: 3.0,
+  splitBallStartR: 140,
+  splitBallMinR: 10
 };

@@ -25,26 +25,61 @@ export function drawTargets() {
   ctx.translate(canvas.width / 2, canvas.height / 2);
   ctx.rotate(state.rollAngle);
   // Dibujar blancos
-  for (const tg of state.targets) {
-    if (tg.dead) continue;
-    const tx = tg.x - state.player.x;
-    const ty = tg.y - state.player.y;
-    let color = '#ffffff';
-    let alpha = 1;
-    if (tg.hitStart) {
-      color = '#22cc66';
-      const p = Math.max(0, Math.min(1, (t - tg.hitStart) / HIT_FADE_MS));
-      alpha = 1 - p;
+  if (CFG.gameMode === 'classic') {
+    for (const tg of state.targets) {
+      if (tg.dead) continue;
+      const tx = tg.x - state.player.x;
+      const ty = tg.y - state.player.y;
+      let color = '#ffffff';
+      let alpha = 1;
+      if (tg.hitStart) {
+        color = '#22cc66';
+        const p = Math.max(0, Math.min(1, (t - tg.hitStart) / HIT_FADE_MS));
+        alpha = 1 - p;
+      }
+      ctx.globalAlpha = alpha;
+      ctx.beginPath();
+      ctx.arc(tx, ty, tg.r, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+      ctx.globalAlpha = 1;
     }
-    ctx.globalAlpha = alpha;
-    ctx.beginPath();
-    ctx.arc(tx, ty, tg.r, 0, Math.PI * 2);
-    ctx.fillStyle = color;
-    ctx.fill();
-    ctx.globalAlpha = 1;
+  }
+  // Dibujar targets del modo Matrix
+  if (CFG.gameMode === 'matrix') {
+    for (const tg of state.matrixTargets) {
+      if (tg.dead) continue;
+      const tx = tg.x - state.player.x;
+      const ty = tg.y - state.player.y;
+      let color = '#66d9ff';
+      let alpha = 1;
+      if (tg.hitStart) {
+        color = '#22ccff';
+        const p = Math.max(0, Math.min(1, (t - tg.hitStart) / HIT_FADE_MS));
+        alpha = 1 - p;
+      }
+      ctx.globalAlpha = alpha;
+      ctx.beginPath();
+      ctx.arc(tx, ty, tg.r, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  }
+  // Dibujar pelotas del modo Split
+  if (CFG.gameMode === 'split') {
+    for (const ball of state.splitBalls) {
+      const tx = ball.x - state.player.x;
+      const ty = ball.y - state.player.y;
+      ctx.beginPath();
+      ctx.arc(tx, ty, ball.r, 0, Math.PI * 2);
+      const flash = t < (ball.hitUntil || 0);
+      ctx.fillStyle = flash ? '#ffccff' : '#cc66ff';
+      ctx.fill();
+    }
   }
   // Dibujar movers (amarillos)
-  if (CFG.moversEnabled && state.movers.length > 0) {
+  if (CFG.gameMode === 'classic' && CFG.moversEnabled && state.movers.length > 0) {
     for (const m of state.movers) {
       if (m.dead) continue;
       // Posición relativa del mover al jugador

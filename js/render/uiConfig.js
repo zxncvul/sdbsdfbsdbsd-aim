@@ -12,8 +12,9 @@ import { CFG } from '../config.js';
 import * as state from '../state.js';
 import { respawnAllTargets, applyUniformRadiusToAll, pickTargetRadius } from '../systems/targets.js';
 import { ensureMoversCount, respawnMover } from '../systems/movers.js';
+import { clearMatrixTargets, pickMatrixRadius } from '../systems/matrixMode.js';
+import { clearSplitBalls, ensureSplitBallsCount } from '../systems/splitMode.js';
 import * as flight from '../systems/flight.js';
-import { nowMs } from '../utils/time.js';
 
 /**
  * Activa o desactiva el modo FA‑off.  Cuando se desactiva, se llama a
@@ -45,6 +46,59 @@ export function buildConfigUI() {
       <div class="pill">C</div>
     </div>
     <div class="controls">
+      <details open>
+        <summary>Modo de juego</summary>
+        <div class="control">
+          <label for="${id('gameMode')}"><span class="k">Modo</span></label>
+          <div class="val" id="${id('gameMode_val')}">${CFG.gameMode}</div>
+          <select id="${id('gameMode')}" style="grid-column:1 / span 2">
+            <option value="classic">Classic</option>
+            <option value="matrix">Matrix</option>
+            <option value="split">Split</option>
+          </select>
+        </div>
+        <div class="box">
+          <div class="mini"><span class="k">Matrix</span> (targets en línea)</div>
+          <div class="row" style="grid-template-columns: repeat(4, minmax(0, 1fr)); gap:8px;">
+            <label class="mini"><input type="checkbox" id="${id('matrixFromTop')}" ${CFG.matrixFromTop ? 'checked' : ''}> Arriba</label>
+            <label class="mini"><input type="checkbox" id="${id('matrixFromBottom')}" ${CFG.matrixFromBottom ? 'checked' : ''}> Abajo</label>
+            <label class="mini"><input type="checkbox" id="${id('matrixFromLeft')}" ${CFG.matrixFromLeft ? 'checked' : ''}> Izquierda</label>
+            <label class="mini"><input type="checkbox" id="${id('matrixFromRight')}" ${CFG.matrixFromRight ? 'checked' : ''}> Derecha</label>
+          </div>
+          <div class="control">
+            <label for="${id('matrixSpawnMs')}"><span class="k">Frecuencia</span> (ms)</label>
+            <div class="val" id="${id('matrixSpawnMs_val')}">${CFG.matrixSpawnMs} ms</div>
+            <input type="range" min="120" max="2000" step="10" value="${CFG.matrixSpawnMs}" id="${id('matrixSpawnMs')}" style="grid-column:1 / span 2">
+          </div>
+          <div class="control">
+            <label for="${id('matrixSpeed')}"><span class="k">Velocidad</span></label>
+            <div class="val" id="${id('matrixSpeed_val')}">${CFG.matrixSpeed.toFixed(2)}</div>
+            <input type="range" min="0.20" max="10.00" step="0.05" value="${CFG.matrixSpeed}" id="${id('matrixSpeed')}" style="grid-column:1 / span 2">
+          </div>
+          <div class="control">
+            <label for="${id('matrixTargetR')}"><span class="k">Tamaño</span></label>
+            <div class="val" id="${id('matrixTargetR_val')}">${CFG.matrixTargetR.toFixed(0)} px</div>
+            <input type="range" min="4" max="80" step="1" value="${CFG.matrixTargetR}" id="${id('matrixTargetR')}" style="grid-column:1 / span 2">
+          </div>
+          <div class="check">
+            <label><input type="checkbox" id="${id('matrixRandomSize')}" ${CFG.matrixRandomSize ? 'checked' : ''}> Tamaño <span class="k">aleatorio</span></label>
+            <span class="mini">si OFF: uniforme</span>
+          </div>
+        </div>
+        <div class="box">
+          <div class="mini"><span class="k">Split</span> (pelotas que se dividen)</div>
+          <div class="control">
+            <label for="${id('splitBallCount')}"><span class="k">Cantidad</span></label>
+            <div class="val" id="${id('splitBallCount_val')}">${CFG.splitBallCount}</div>
+            <input type="range" min="0" max="3" step="1" value="${CFG.splitBallCount}" id="${id('splitBallCount')}" style="grid-column:1 / span 2">
+          </div>
+          <div class="control">
+            <label for="${id('splitBallSpeed')}"><span class="k">Velocidad</span></label>
+            <div class="val" id="${id('splitBallSpeed_val')}">${CFG.splitBallSpeed.toFixed(2)}</div>
+            <input type="range" min="0.20" max="8.00" step="0.05" value="${CFG.splitBallSpeed}" id="${id('splitBallSpeed')}" style="grid-column:1 / span 2">
+          </div>
+        </div>
+      </details>
       <details open>
         <summary>Sensibilidades</summary>
         <div class="control">
@@ -230,17 +284,37 @@ export function buildConfigUI() {
   bindRange('faAccX', v => v.toFixed(2));
   bindRange('faAccY', v => v.toFixed(2));
   bindRange('faAccZ', v => v.toFixed(2));
+  bindRange('matrixSpawnMs', v => `${Math.round(v)} ms`);
+  bindRange('matrixSpeed', v => v.toFixed(2));
+  bindRange('matrixTargetR', v => `${Math.round(v)} px`, () => {
+    CFG.matrixTargetR = Math.round(CFG.matrixTargetR);
+    if (!CFG.matrixRandomSize) {
+      for (const t of state.matrixTargets) t.r = CFG.matrixTargetR;
+    }
+    clearMatrixTargets();
+  });
+  bindRange('splitBallCount', v => `${v | 0}`, () => {
+    CFG.splitBallCount = (CFG.splitBallCount | 0);
+    if (CFG.gameMode === 'split') {
+      ensureSplitBallsCount();
+    } else {
+      clearSplitBalls();
+    }
+  });
+  bindRange('splitBallSpeed', v => v.toFixed(2));
   bindRange('targetR', v => `${v.toFixed(0)} px`, () => {
     if (!CFG.randomTargetSize) applyUniformRadiusToAll();
   });
   bindRange('targetCount', v => `${Math.round(v)}`, () => {
     CFG.targetCount = Math.round(CFG.targetCount);
+    if (CFG.gameMode !== 'classic') return;
     respawnAllTargets();
     ensureMoversCount();
     for (let i = 0; i < state.movers.length; i++) respawnMover(state.movers[i]);
   });
   bindRange('moversCount', v => `${v | 0}`, () => {
     CFG.moversCount = (CFG.moversCount | 0);
+    if (CFG.gameMode !== 'classic') return;
     ensureMoversCount();
     // Al cambiar la cantidad de movers, reposicionamos los existentes
     for (let i = 0; i < state.movers.length; i++) respawnMover(state.movers[i]);
@@ -248,6 +322,7 @@ export function buildConfigUI() {
   // Tamaño de movers: actualiza CFG y reposiciona todos los movers
   bindRange('moversR', v => `${Math.round(v)} px`, () => {
     CFG.moversR = Math.round(CFG.moversR);
+    if (CFG.gameMode !== 'classic') return;
     // Ajustamos el radio de todos los movers actuales.  Para evitar
     // solapamiento con los bordes, los respawneamos.
     for (let i = 0; i < state.movers.length; i++) {
@@ -288,16 +363,27 @@ export function buildConfigUI() {
   bindCheck('applyCurveToX');
   bindCheck('showGrid');
   bindCheck('blackBg');
-  bindCheck('regenOnHit', () => respawnAllTargets());
+  bindCheck('regenOnHit', () => {
+    if (CFG.gameMode === 'classic') respawnAllTargets();
+  });
   bindCheck('randomTargetSize', () => {
+    if (CFG.gameMode !== 'classic') return;
     if (CFG.randomTargetSize) {
       for (const t of state.targets) t.r = pickTargetRadius();
     } else {
       applyUniformRadiusToAll();
     }
   });
+  bindCheck('matrixRandomSize', () => {
+    if (CFG.matrixRandomSize) {
+      for (const t of state.matrixTargets) t.r = pickMatrixRadius();
+    } else {
+      for (const t of state.matrixTargets) t.r = CFG.matrixTargetR;
+    }
+  });
   // Vaciar movers al desactivarlos
   bindCheck('moversEnabled', () => {
+    if (CFG.gameMode !== 'classic') return;
     ensureMoversCount();
     if (!CFG.moversEnabled) return;
     for (let i = 0; i < state.movers.length; i++) respawnMover(state.movers[i]);
@@ -309,4 +395,27 @@ export function buildConfigUI() {
   }
   // Flee de movers
   bindCheck('moversFlee');
+
+  // Dirección de Matrix
+  bindCheck('matrixFromTop');
+  bindCheck('matrixFromBottom');
+  bindCheck('matrixFromLeft');
+  bindCheck('matrixFromRight');
+
+  // Selector de modo de juego
+  const modeEl = document.getElementById(id('gameMode'));
+  const modeValEl = document.getElementById(id('gameMode_val'));
+  if (modeEl) {
+    modeEl.value = CFG.gameMode;
+    modeEl.addEventListener('change', () => {
+      CFG.gameMode = modeEl.value;
+      if (modeValEl) modeValEl.textContent = CFG.gameMode;
+      if (CFG.gameMode === 'matrix') {
+        clearMatrixTargets();
+      }
+      if (CFG.gameMode === 'split') {
+        ensureSplitBallsCount();
+      }
+    });
+  }
 }
