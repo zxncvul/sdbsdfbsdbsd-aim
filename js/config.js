@@ -70,8 +70,8 @@ export const CFG = {
   // Tamaño base del target (blanco)
   targetR: 10,
 
-  // Número de blancos en pantalla (1..20)
-  targetCount: 0,
+  // Número de blancos en pantalla (0..20)
+  targetCount: 1,
 
   // Si es true, al acertar un blanco éste reaparece inmediatamente.
   // Si es false, sólo reaparecerán cuando se eliminen todos.
@@ -106,7 +106,7 @@ export const CFG = {
   // Ajustamos el número predeterminado de movers a un valor mayor
   // que cero para facilitar las pruebas de la nueva lógica.  El panel
   // de configuración sigue permitiendo cambiar esta cantidad.
-  moversCount: 0,
+  moversCount: 3,
   // Patrón de movimiento se ignora en la nueva versión.  Los movers
   // seleccionan patrones aleatorios y los encadenan automáticamente.  Este
   // campo se conserva por compatibilidad pero no se usa.
@@ -120,9 +120,7 @@ export const CFG = {
   // velocidad de huida aumenta con cada disparo recibido y se regenera con
   // el tiempo.  Si es false, no reaccionarán al jugador salvo por las
   // fuerzas de esquiva clásicas.
-  moversFlee: false
-
-  ,
+  moversFlee: false,
   // Incrementos de velocidad de huida al recibir impactos.  Cada
   // mover tiene tres vidas; al primer impacto su velocidad de huida
   // aumenta un porcentaje especificado por `moversHit1Boost`.  Al

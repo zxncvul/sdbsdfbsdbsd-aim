@@ -252,7 +252,7 @@
       };
     }
     function respawnAllTargets() {
-      const n = clamp(Math.round(CFG.targetCount), 1, 20);
+      const n = clamp(Math.round(CFG.targetCount), 0, 20);
       targets = [];
       for (let i = 0; i < n; i++) {
         targets.push(spawnTargetNearPlayer());
@@ -323,6 +323,7 @@
         hits: 0,
         escapeBoost: 0,
         lastHitTime: 0,
+        dead: false,
         pattern,
         nextPatternSwitch: tNow + rand(2000, 6000)
       };
@@ -343,8 +344,14 @@
       m.hits = 0;
       m.escapeBoost = 0;
       m.lastHitTime = 0;
+      m.dead = false;
       m.pattern = nm.pattern;
       m.nextPatternSwitch = nm.nextPatternSwitch;
+    }
+    function respawnAllMovers() {
+      for (let i = 0; i < movers.length; i++) {
+        respawnMover(movers[i]);
+      }
     }
     function updateMovers(dtN, playerSpeed = 0) {
       ensureMoversCount();
@@ -364,7 +371,7 @@
         const s = worldToScreen(dx, dy, cos, sin);
         liveTargetsScr.push({ sx: s.sx, sy: s.sy, r: tg.r });
       }
-      const moversScr = movers.map(m => {
+      const moversScr = movers.filter(m => !m.dead).map(m => {
         const dx = m.x - player.x;
         const dy = m.y - player.y;
         const s = worldToScreen(dx, dy, cos, sin);
@@ -374,6 +381,7 @@
       const avoidK = CFG.moversAvoid;
       for (let i = 0; i < movers.length; i++) {
         const m = movers[i];
+        if (m.dead) continue;
         // Regeneración de vidas y velocidad de huida
         if (m.hits > 0 && m.lastHitTime && (t - m.lastHitTime > HEAL_INTERVAL_MS)) {
           m.hits = 0;
@@ -593,6 +601,7 @@
       if (!CFG.moversEnabled || movers.length === 0) return -1;
       for (let i = 0; i < movers.length; i++) {
         const m = movers[i];
+        if (m.dead) continue;
         const dx = m.x - player.x;
         const dy = m.y - player.y;
         if (Math.hypot(dx, dy) < m.r) return i;
@@ -660,6 +669,7 @@
       // Movers
       if (CFG.moversEnabled && movers.length > 0) {
         for (const m of movers) {
+          if (m.dead) continue;
           const tx = m.x - player.x;
           const ty = m.y - player.y;
           ctx.beginPath();
@@ -1058,8 +1068,15 @@
         m.escapeBoost = esc;
         m.lastHitTime = t;
         if (m.hits >= MOVERS_MAX_HITS) {
-          // Al agotar vidas regeneramos automáticamente el mover
-          respawnMover(m);
+          // Al agotar vidas regeneramos automáticamente el mover si
+          // regenOnHit está activo; de lo contrario lo dejamos muerto.
+          if (CFG.regenOnHit) {
+            respawnMover(m);
+          } else {
+            m.dead = true;
+            m.hitUntil = 0;
+            m.lastHitTime = 0;
+          }
           playSuccessWithDelay();
         }
         return;
@@ -1124,13 +1141,19 @@
      */
     function update() {
       const pad = getPad(activeIndex);
-      if (!pad) return;
       const t = nowMs();
       let dtN = clamp((t - lastFrameMs) / 16.6667, 0.25, 3);
       lastFrameMs = t;
-      let roll = cleanAxis(-(pad.axes[AXIS_ROLL] ?? 0));
-      let pitch = cleanAxis(-(pad.axes[AXIS_PITCH] ?? 0));
-      let yaw = cleanAxis((pad.axes[AXIS_YAW] ?? 0));
+      let roll = 0;
+      let pitch = 0;
+      let yaw = 0;
+      if (pad) {
+        roll = cleanAxis(-(pad.axes[AXIS_ROLL] ?? 0));
+        pitch = cleanAxis(-(pad.axes[AXIS_PITCH] ?? 0));
+        yaw = cleanAxis((pad.axes[AXIS_YAW] ?? 0));
+      } else {
+        triggerPressed = false;
+      }
       if (CFG.useCurve) {
         roll = applyJCurve(roll, CFG.cpX, CFG.vaX);
         pitch = applyJCurve(pitch, CFG.cpY, CFG.vaY);
@@ -1223,8 +1246,14 @@
         const allDead = targets.length > 0 && targets.every(tt => tt.dead);
         if (allDead) respawnAllTargets();
       }
+      if (!CFG.regenOnHit) {
+        const mDead = movers.length > 0 && movers.every(mv => mv.dead);
+        if (mDead) respawnAllMovers();
+      }
       // Gestión disparo
-      handleTrigger(pad);
+      if (pad) {
+        handleTrigger(pad);
+      }
     }
     function draw() {
       if (!ctx || !canvas) return;
