@@ -33,6 +33,12 @@ export let prevPlayerY = 0;
 // Lista de blancos activos.  Cada objeto tiene { x, y, r, hitStart, dead }
 export let targets = [];
 
+// Lista de targets del modo Matrix.
+export let matrixTargets = [];
+
+// Lista de pelotas del modo Split.
+export let splitBalls = [];
+
 // Lista de movers (amarillos).  Los objetos tienen { x, y, vx, vy, r, t0, p1, p2, hitUntil }
 export const movers = [];
 
@@ -52,6 +58,20 @@ export let lastFrameMs = performance.now();
 // Flags para mostrar u ocultar paneles de UI
 export let showConfig = false;
 export let showDevHud = false;
+
+// Modo de juego activo (se usa para detectar cambios)
+export let activeGameMode = 'classic';
+
+// Estado del spawner del modo Matrix
+export let matrixSpawner = {
+  lastSpawnAt: 0,
+  laneIndex: {
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0
+  }
+};
 
 // Elementos DOM que se rellenan en `main.js` tras cargarse la página.  Se
 // exportan aquí para que otros módulos puedan manipular el HUD o la

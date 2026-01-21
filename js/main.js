@@ -53,6 +53,19 @@ import {
 } from './systems/movers.js';
 import { spawnTargetNearPlayer } from './systems/targets.js';
 import * as flight from './systems/flight.js';
+import {
+  clearMatrixTargets,
+  updateMatrixTargets,
+  hitTestMatrixTargets
+} from './systems/matrixMode.js';
+import {
+  clearSplitBalls,
+  ensureSplitBallsCount,
+  updateSplitBalls,
+  hitTestSplitBalls,
+  splitBallAt,
+  flashSplitBall
+} from './systems/splitMode.js';
 
 // Audio helpers
 function playShot() {
@@ -73,75 +86,125 @@ function playSuccessWithDelay() {
   }, SUCCESS_DELAY_MS);
 }
 
+function clearClassicEntities() {
+  state.targets = [];
+  state.movers.length = 0;
+}
+
+function syncGameMode() {
+  if (state.activeGameMode === CFG.gameMode) return;
+  state.activeGameMode = CFG.gameMode;
+  if (CFG.gameMode === 'classic') {
+    clearMatrixTargets();
+    clearSplitBalls();
+    respawnAllTargets();
+    ensureMoversCount();
+    for (let i = 0; i < state.movers.length; i++) respawnMover(state.movers[i]);
+  } else if (CFG.gameMode === 'matrix') {
+    clearSplitBalls();
+    clearClassicEntities();
+    clearMatrixTargets();
+  } else if (CFG.gameMode === 'split') {
+    clearClassicEntities();
+    clearMatrixTargets();
+    clearSplitBalls();
+    ensureSplitBallsCount();
+  }
+}
+
 // Disparo principal: controla la detección de hits en movers y targets
 function shoot() {
   const t = nowMs();
   state.crosshairFlashUntil = t + CROSSHAIR_FLASH_MS;
   playShot();
-  // Primero comprobamos movers amarillos
-  const mi = hitTestMovers();
-  if (mi >= 0) {
-    const m = state.movers[mi];
-    // Marca el tiempo del golpe para dibujar el flash
-    m.hitUntil = t + 140;
-    // Incrementamos contador de impactos
-    m.hits = (m.hits | 0) + 1;
-    m.lastHitTime = t;
-    // Actualizamos el multiplicador de velocidad de huida según las
-    // configuraciones definidas en `CFG`.  En lugar de sumar 1 de manera
-    // incremental, calculamos una ganancia acumulativa basada en los
-    // impactos:
-    //   hits == 1 → m.escapeBoost = CFG.moversHit1Boost
-    //   hits >= 2 → m.escapeBoost = CFG.moversHit1Boost + CFG.moversHit2Boost
-    // Esto permite ajustar los incrementos con porcentajes arbitrarios.
-    let esc = 0;
-    if (m.hits === 1) {
-      esc = CFG.moversHit1Boost || 0;
-    } else if (m.hits >= 2) {
-      esc = (CFG.moversHit1Boost || 0) + (CFG.moversHit2Boost || 0);
+  if (CFG.gameMode === 'split') {
+    const si = hitTestSplitBalls();
+    if (si >= 0) {
+      flashSplitBall(si);
+      splitBallAt(si);
+      playSuccessWithDelay();
+      return;
     }
-    m.escapeBoost = esc;
-    // Si alcanza el máximo de impactos, gestionamos la vida restante.  Si
-    // `CFG.regenOnHit` está activa, respawn normal.  Si está desactivada,
-    // marcamos el mover como muerto para que desaparezca hasta que
-    // posteriormente se reaparezca manualmente.
-    if (m.hits >= MOVERS_MAX_HITS) {
-      // Reiniciamos impactos para la siguiente vida
-      m.hits = MOVERS_MAX_HITS;
-      if (CFG.regenOnHit) {
-        respawnMover(m);
-        playSuccessWithDelay();
-      } else {
-        // Marcar como muerto y dejar que el dibujo lo oculte
-        m.dead = true;
-        m.hitUntil = 0;
-        m.lastHitTime = 0;
-        // Ajustamos el color final (opcional)
-        playSuccessWithDelay();
-      }
+  }
+  if (CFG.gameMode === 'matrix') {
+    const hit = hitTestMatrixTargets();
+    if (hit) {
+      playSuccessWithDelay();
+      return;
     }
+  }
+  if (CFG.gameMode !== 'classic') {
+    state.missFlashUntil = t + MISS_FLASH_MS;
     return;
   }
-  // Luego buscamos el blanco más cercano dentro de su radio
-  let bestIdx = -1;
-  let bestD = Infinity;
-  for (let i = 0; i < state.targets.length; i++) {
-    const tg = state.targets[i];
-    if (tg.dead) continue;
-    if (tg.hitStart) continue;
-    const dx = tg.x - state.player.x;
-    const dy = tg.y - state.player.y;
-    const d = Math.hypot(dx, dy);
-    if (d < tg.r && d < bestD) {
-      bestD = d;
-      bestIdx = i;
+  // Primero comprobamos movers amarillos
+  if (CFG.gameMode === 'classic') {
+    const mi = hitTestMovers();
+    if (mi >= 0) {
+      const m = state.movers[mi];
+      // Marca el tiempo del golpe para dibujar el flash
+      m.hitUntil = t + 140;
+      // Incrementamos contador de impactos
+      m.hits = (m.hits | 0) + 1;
+      m.lastHitTime = t;
+      // Actualizamos el multiplicador de velocidad de huida según las
+      // configuraciones definidas en `CFG`.  En lugar de sumar 1 de manera
+      // incremental, calculamos una ganancia acumulativa basada en los
+      // impactos:
+      //   hits == 1 → m.escapeBoost = CFG.moversHit1Boost
+      //   hits >= 2 → m.escapeBoost = CFG.moversHit1Boost + CFG.moversHit2Boost
+      // Esto permite ajustar los incrementos con porcentajes arbitrarios.
+      let esc = 0;
+      if (m.hits === 1) {
+        esc = CFG.moversHit1Boost || 0;
+      } else if (m.hits >= 2) {
+        esc = (CFG.moversHit1Boost || 0) + (CFG.moversHit2Boost || 0);
+      }
+      m.escapeBoost = esc;
+      // Si alcanza el máximo de impactos, gestionamos la vida restante.  Si
+      // `CFG.regenOnHit` está activa, respawn normal.  Si está desactivada,
+      // marcamos el mover como muerto para que desaparezca hasta que
+      // posteriormente se reaparezca manualmente.
+      if (m.hits >= MOVERS_MAX_HITS) {
+        // Reiniciamos impactos para la siguiente vida
+        m.hits = MOVERS_MAX_HITS;
+        if (CFG.regenOnHit) {
+          respawnMover(m);
+          playSuccessWithDelay();
+        } else {
+          // Marcar como muerto y dejar que el dibujo lo oculte
+          m.dead = true;
+          m.hitUntil = 0;
+          m.lastHitTime = 0;
+          // Ajustamos el color final (opcional)
+          playSuccessWithDelay();
+        }
+      }
+      return;
     }
   }
-  if (bestIdx >= 0) {
-    state.targets[bestIdx].hitStart = t;
-    playSuccessWithDelay();
-  } else {
-    state.missFlashUntil = t + MISS_FLASH_MS;
+  // Luego buscamos el blanco más cercano dentro de su radio
+  if (CFG.gameMode === 'classic') {
+    let bestIdx = -1;
+    let bestD = Infinity;
+    for (let i = 0; i < state.targets.length; i++) {
+      const tg = state.targets[i];
+      if (tg.dead) continue;
+      if (tg.hitStart) continue;
+      const dx = tg.x - state.player.x;
+      const dy = tg.y - state.player.y;
+      const d = Math.hypot(dx, dy);
+      if (d < tg.r && d < bestD) {
+        bestD = d;
+        bestIdx = i;
+      }
+    }
+    if (bestIdx >= 0) {
+      state.targets[bestIdx].hitStart = t;
+      playSuccessWithDelay();
+    } else {
+      state.missFlashUntil = t + MISS_FLASH_MS;
+    }
   }
 }
 
@@ -205,6 +268,7 @@ function update() {
   } else {
     state.triggerPressed = false;
   }
+  syncGameMode();
   if (CFG.useCurve) {
     roll = applyJCurve(roll, CFG.cpX, CFG.vaX);
     pitch = applyJCurve(pitch, CFG.cpY, CFG.vaY);
@@ -282,37 +346,44 @@ function update() {
     state.prevPlayerX = state.player.x;
     state.prevPlayerY = state.player.y;
   }
-  // Actualizar movers con la velocidad del jugador
-  updateMovers(dtN, playerSpeed);
-  // HITS / RESPAWNS blancos
-  for (let i = 0; i < state.targets.length; i++) {
-    const tg = state.targets[i];
-    if (tg.dead) continue;
-    if (tg.hitStart) {
-      if (t - tg.hitStart >= HIT_FADE_MS) {
-        if (CFG.regenOnHit) {
-          state.targets[i] = spawnTargetNearPlayer();
-        } else {
-          tg.dead = true;
-          tg.hitStart = 0;
+  if (CFG.gameMode === 'classic') {
+    // Actualizar movers con la velocidad del jugador
+    updateMovers(dtN, playerSpeed);
+    // HITS / RESPAWNS blancos
+    for (let i = 0; i < state.targets.length; i++) {
+      const tg = state.targets[i];
+      if (tg.dead) continue;
+      if (tg.hitStart) {
+        if (t - tg.hitStart >= HIT_FADE_MS) {
+          if (CFG.regenOnHit) {
+            state.targets[i] = spawnTargetNearPlayer();
+          } else {
+            tg.dead = true;
+            tg.hitStart = 0;
+          }
         }
       }
     }
-  }
-  if (!CFG.regenOnHit) {
-    const allDead = state.targets.length > 0 && state.targets.every(tt => tt.dead);
-    if (allDead) respawnAllTargets();
-  }
-  // Respawn de movers cuando la regeneración al acertar está desactivada
-  // y todos los movers han sido eliminados.  A diferencia de los
-  // blancos, los movers se mantienen en el arreglo con la marca `dead`
-  // para preservar su número.  Aquí comprobamos si todos están
-  // muertos; si es así, reaparecemos todos para iniciar un nuevo ciclo.
-  if (!CFG.regenOnHit) {
-    const mDead = state.movers.length > 0 && state.movers.every(mv => mv.dead);
-    if (mDead) {
-      respawnAllMovers();
+    if (!CFG.regenOnHit) {
+      const allDead = state.targets.length > 0 && state.targets.every(tt => tt.dead);
+      if (allDead) respawnAllTargets();
     }
+    // Respawn de movers cuando la regeneración al acertar está desactivada
+    // y todos los movers han sido eliminados.  A diferencia de los
+    // blancos, los movers se mantienen en el arreglo con la marca `dead`
+    // para preservar su número.  Aquí comprobamos si todos están
+    // muertos; si es así, reaparecemos todos para iniciar un nuevo ciclo.
+    if (!CFG.regenOnHit) {
+      const mDead = state.movers.length > 0 && state.movers.every(mv => mv.dead);
+      if (mDead) {
+        respawnAllMovers();
+      }
+    }
+  } else if (CFG.gameMode === 'matrix') {
+    updateMatrixTargets(dtN);
+  } else if (CFG.gameMode === 'split') {
+    ensureSplitBallsCount();
+    updateSplitBalls(dtN);
   }
   // Gestionar el disparo
   if (pad) {
@@ -389,9 +460,16 @@ window.addEventListener('DOMContentLoaded', () => {
     }
     if (k === ' ' || e.code === 'Space') {
       state.missFlashUntil = 0;
-      respawnAllTargets();
-      ensureMoversCount();
-      for (let i = 0; i < state.movers.length; i++) respawnMover(state.movers[i]);
+      if (CFG.gameMode === 'classic') {
+        respawnAllTargets();
+        ensureMoversCount();
+        for (let i = 0; i < state.movers.length; i++) respawnMover(state.movers[i]);
+      } else if (CFG.gameMode === 'matrix') {
+        clearMatrixTargets();
+      } else if (CFG.gameMode === 'split') {
+        clearSplitBalls();
+        ensureSplitBallsCount();
+      }
       e.preventDefault();
       return;
     }
@@ -399,6 +477,8 @@ window.addEventListener('DOMContentLoaded', () => {
   // Inicializamos blancos y movers
   respawnAllTargets();
   ensureMoversCount();
+  clearMatrixTargets();
+  clearSplitBalls();
   // Iniciamos bucle
   loop();
 });
